@@ -1,0 +1,129 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: payment-service
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/stayease_payment_db
+    username: root
+    password: 2000030757
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# External Services Configuration
+services:
+  notification:
+    url: http://localhost:8087
+  booking:
+    url: http://localhost:8085
+  users:
+    url: http://localhost:8082
+
+# Razorpay Configuration (Test Mode)
+razorpay:
+  key-id: rzp_test_Sf0goLCDZ1ev3P
+  key-secret: Go22krJbTtjJcqLMh3ca9e2G
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.stayease.payment_service: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Swagger/OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      razorpay-service:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        failureRateThreshold: 50.0
+        waitDurationInOpenState: 30000
+      booking-service:
+        registerHealthIndicator: true
+        slidingWindowSize: 5
+        failureRateThreshold: 50.0
+        waitDurationInOpenState: 20000
+      notification-service:
+        registerHealthIndicator: true
+        slidingWindowSize: 5
+        failureRateThreshold: 60.0
+        waitDurationInOpenState: 15000
+
+  ratelimiter:
+    instances:
+      payment-api:
+        registerHealthIndicator: false
+        limitForPeriod: 200
+        limitRefreshPeriod: 1m
+        timeoutDuration: 5s
+      razorpay-api:
+        registerHealthIndicator: false
+        limitForPeriod: 50
+        limitRefreshPeriod: 10s
+        timeoutDuration: 3s
+
+  retry:
+    instances:
+      razorpay-retry:
+        maxAttempts: 3
+        waitDuration: 500
+      external-service-retry:
+        maxAttempts: 2
+        waitDuration: 300
+
+# Payment Service Configuration
+payment:
+  reconciliation:
+    interval: 300000 # 5 minutes
+  order:
+    expiry: 900 # 15 minutes in seconds
+  refund:
+    enabled: true
+    maxRefundDays: 30
+
+# Actuator Configuration for Monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus,info
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 5000
+        loggerLevel: FULL
