@@ -11,9 +11,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class RefundResponseDTO {
-    private Long id;
-    private Long paymentOrderId;
-    private String refundId;
+    private Long paymentId;
+    private String razorpayOrderId;
+    private Long refundId;
     private Double amount;
     private String status;
     private String reason;

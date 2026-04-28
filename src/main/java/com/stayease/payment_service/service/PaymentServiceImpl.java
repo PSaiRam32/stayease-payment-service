@@ -1,22 +1,20 @@
 package com.stayease.payment_service.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stayease.payment_service.config.BookingServiceClient;
-import com.stayease.payment_service.config.NotificationClient;
-import com.stayease.payment_service.config.UserClient;
 import com.stayease.payment_service.dto.*;
 import com.stayease.payment_service.entity.*;
 import com.stayease.payment_service.exception.BusinessException;
 import com.stayease.payment_service.exception.ResourceNotFoundException;
 import com.stayease.payment_service.repository.PaymentOrderRepository;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 @Slf4j
 @Service
@@ -26,15 +24,41 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentOrderRepository paymentOrderRepository;
     private final RazorpayIntegrationService razorpayService;
     private final BookingServiceClient bookingServiceClient;
-    private final NotificationClient notificationClient;
-    private final UserClient userClient;
     private final AuditService auditService;
+
+    @Retry(name = "bookingRetry")
+    @CircuitBreaker(name = "bookingCB", fallbackMethod = "bookingConfirmFallback")
+    private void confirmBookingSafe(Long bookingId) {
+        bookingServiceClient.confirmBooking(bookingId);
+    }
+
+    private void bookingConfirmFallback(Long bookingId, Throwable ex) {
+        log.error("Booking confirm FAILED after payment success. bookingId={}", bookingId, ex);
+        // TODO: push to retry queue / DB
+    }
+
+    @Retry(name = "bookingRetry")
+    @CircuitBreaker(name = "bookingCB", fallbackMethod = "bookingFailFallback")
+    private void failBookingSafe(Long bookingId) {
+        bookingServiceClient.failBooking(bookingId);
+    }
+
+    private void bookingFailFallback(Long bookingId, Throwable ex) {
+        log.error("Booking fail FAILED. bookingId={}", bookingId, ex);
+        // TODO: push to retry queue / DB (future improvement)
+    }
 
     // ================= CREATE PAYMENT ORDER =================
 
     @Override
     @Transactional
     public PaymentOrderResponseDTO createPaymentOrder(PaymentOrderRequestDTO request) {
+        if (request.getBookingId() == null) {
+            throw new BusinessException("Booking ID is required");
+        }
+        if (request.getAmount() == null || request.getAmount() <= 0) {
+            throw new BusinessException("Invalid payment amount");
+        }
         log.info("Creating payment order for booking: {}", request.getBookingId());
         paymentOrderRepository.findByBookingId(request.getBookingId())
                 .ifPresent(order -> {
@@ -59,7 +83,9 @@ public class PaymentServiceImpl implements PaymentService {
                     .createdAt(LocalDateTime.now())
                     .expiredAt(LocalDateTime.now().plusMinutes(15))
                     .build();
-            return mapOrderToDTO(paymentOrderRepository.save(paymentOrder));
+            PaymentOrder saved = paymentOrderRepository.save(paymentOrder);
+            log.info("Payment order created successfully: {}", razorpayOrderId);
+            return mapOrderToDTO(saved);
         } catch (Exception e) {
             throw new BusinessException("Payment order creation failed: " + e.getMessage());
         }
@@ -70,18 +96,17 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public PaymentResponseDTO confirmPayment(PaymentConfirmationRequestDTO request) {
-        PaymentOrder paymentOrder = paymentOrderRepository.findById(request.getOrderId())
+        PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(request.getRazorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
         if (paymentOrder.getStatus() == PaymentOrderStatus.PAYMENT_CONFIRMED) {
             return buildPaymentResponse(paymentOrder, "Already confirmed");
         }
-        UserResponseDTO user = userClient.getUserByBookingId(paymentOrder.getBookingId());
         if (!razorpayService.verifyPaymentSignature(
                 request.getRazorpayOrderId(),
                 request.getRazorpayPaymentId(),
                 request.getRazorpaySignature())) {
 
-            failPayment(paymentOrder, "Invalid signature", user);
+            failPaymentInternal(paymentOrder, "Invalid signature");
             throw new BusinessException("Payment verification failed");
         }
         try {
@@ -90,17 +115,24 @@ public class PaymentServiceImpl implements PaymentService {
             paymentOrder.setTransactionId(request.getRazorpayPaymentId());
             paymentOrder.setConfirmedAt(LocalDateTime.now());
             paymentOrderRepository.save(paymentOrder);
-            bookingServiceClient.confirmBooking(paymentOrder.getBookingId());
-            sendNotification(user,
-                    paymentOrder.getBookingId(),
-                    "BOOKING_CONFIRMED",
-                    "Your booking is confirmed. Booking ID: " + paymentOrder.getBookingId());
-            auditService.logEvent(paymentOrder.getId(), "PAYMENT_CONFIRMED", "Success");
-            return buildPaymentResponse(paymentOrder, "Payment confirmed");
         } catch (Exception e) {
-            failPayment(paymentOrder, e.getMessage(), user);
+            failPaymentInternal(paymentOrder, e.getMessage());
             throw new BusinessException("Payment failed: " + e.getMessage());
         }
+        try {
+            confirmBookingSafe(paymentOrder.getBookingId());
+        } catch (Exception ex) {
+            log.error("Booking sync failed after payment success", ex);
+        }
+
+        auditService.logEvent(
+                paymentOrder.getRazorpayOrderId(),
+                paymentOrder.getPaymentId(),
+                "PAYMENT_CONFIRMED",
+                "Success"
+        );
+
+        return buildPaymentResponse(paymentOrder, "Payment confirmed");
     }
 
     // ================= TEST CONFIRM PAYMENT =================
@@ -120,44 +152,61 @@ public class PaymentServiceImpl implements PaymentService {
         paymentOrderRepository.save(paymentOrder);
         log.info("TEST PAYMENT SUCCESS for orderId={}, bookingId={}",
                 razorpayOrderId, paymentOrder.getBookingId());
-        bookingServiceClient.confirmBooking(paymentOrder.getBookingId());
         try {
-            UserResponseDTO user = userClient.getUserByBookingId(paymentOrder.getBookingId());
-            sendNotification(user,
-                    paymentOrder.getBookingId(),
-                    "BOOKING_CONFIRMED",
-                    "Your booking is confirmed. Booking ID: " + paymentOrder.getBookingId());
+            confirmBookingSafe(paymentOrder.getBookingId());
         } catch (Exception ex) {
-            log.error("Notification failed", ex);
+            log.error("Booking sync failed (test)", ex);
         }
-        auditService.logEvent(paymentOrder.getId(), "TEST_PAYMENT_CONFIRMED", "Simulated success");
+        auditService.logEvent(paymentOrder.getRazorpayOrderId(),paymentOrder.getPaymentId(), "TEST_PAYMENT_CONFIRMED", "Simulated success");
     }
 
     // ================= WEBHOOK =================
 
     @Override
     @Transactional
-    public void handleWebhookCallback(WebhookPayloadDTO payload) {
+    public void handleWebhookCallback(String rawPayload, String signature) {
         try {
+            if (!razorpayService.verifyWebhookSignature(rawPayload, signature)) {
+                throw new BusinessException("Invalid webhook signature");
+            }
+            ObjectMapper mapper = new ObjectMapper();
+            WebhookPayloadDTO payload = mapper.readValue(rawPayload, WebhookPayloadDTO.class);
             String event = payload.getEvent();
-            Map<String, Object> payment = (Map<String, Object>) payload.getPayload().get("payment");
-            String razorpayOrderId = (String) payment.get("order_id");
+            Map<String, Object> paymentObj =
+                    (Map<String, Object>) payload.getPayload().get("payment");
+            Map<String, Object> entity =
+                    (Map<String, Object>) paymentObj.get("entity");
+            String razorpayOrderId = (String) entity.get("order_id");
             PaymentOrder paymentOrder = paymentOrderRepository
                     .findByRazorpayOrderId(razorpayOrderId)
                     .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
-            UserResponseDTO user = userClient.getUserByBookingId(paymentOrder.getBookingId());
-            if ("payment.authorized".equals(event)) {
+            if (paymentOrder.getStatus() == PaymentOrderStatus.PAYMENT_CONFIRMED) {
+                log.warn("Webhook already processed for orderId={}", razorpayOrderId);
+                return;
+            }
+            if ("payment.captured".equals(event)) {
                 paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
                 paymentOrder.setConfirmedAt(LocalDateTime.now());
-                bookingServiceClient.confirmBooking(paymentOrder.getBookingId());
-                sendNotification(user,
-                        paymentOrder.getBookingId(),
-                        "BOOKING_CONFIRMED",
-                        "Payment confirmed via webhook");
+                paymentOrderRepository.save(paymentOrder);
+                try {
+                    confirmBookingSafe(paymentOrder.getBookingId());
+                } catch (Exception ex) {
+                    log.error("Booking sync failed (webhook)", ex);
+                }
+                auditService.logEvent(
+                        razorpayOrderId,
+                        paymentOrder.getPaymentId(),
+                        "WEBHOOK_PAYMENT_CONFIRMED",
+                        "Captured via webhook"
+                );
+
+            } else if ("payment.failed".equals(event)) {
+                if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED) {
+                    failPaymentInternal(paymentOrder, "Webhook failure event");
+                }
             } else {
-                failPayment(paymentOrder, "Webhook failed", user);
+                log.info("Unhandled webhook event: {}", event);
             }
-            paymentOrderRepository.save(paymentOrder);
         } catch (Exception e) {
             throw new BusinessException("Webhook processing failed: " + e.getMessage());
         }
@@ -184,35 +233,22 @@ public class PaymentServiceImpl implements PaymentService {
 
     // ================= FAILURE =================
 
-    private void failPayment(PaymentOrder paymentOrder, String error, UserResponseDTO user) {
+    private void failPaymentInternal(PaymentOrder paymentOrder, String error) {
         paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_FAILED);
         paymentOrder.setErrorMessage(error);
         paymentOrderRepository.save(paymentOrder);
-        bookingServiceClient.failBooking(paymentOrder.getBookingId());
-        sendNotification(user,
-                paymentOrder.getBookingId(),
-                "PAYMENT_FAILED",
-                "Payment failed for booking ID: " + paymentOrder.getBookingId());
-    }
-
-    // ================= NOTIFICATION =================
-
-    private void sendNotification(UserResponseDTO user, Long bookingId, String type, String message) {
-        NotificationRequestDTO notification = new NotificationRequestDTO();
-        notification.setBookingId(bookingId);
-        notification.setEmail(user.getEmail());
-        notification.setPhoneNumber(user.getPhone());
-        notification.setType(type);
-        notification.setMessage(message);
-        notification.setChannels(List.of("EMAIL", "SMS"));
-        notificationClient.sendNotification(notification);
+        try {
+            failBookingSafe(paymentOrder.getBookingId());
+        } catch (Exception ex) {
+            log.error("Booking fail sync failed", ex);
+        }
     }
 
     // ================= MAPPERS =================
 
     private PaymentOrderResponseDTO mapOrderToDTO(PaymentOrder order) {
         return PaymentOrderResponseDTO.builder()
-                .id(order.getId())
+                .paymentId(order.getPaymentId())
                 .bookingId(order.getBookingId())
                 .amount(order.getAmount())
                 .razorpayOrderId(order.getRazorpayOrderId())
@@ -222,9 +258,9 @@ public class PaymentServiceImpl implements PaymentService {
 
     private PaymentResponseDTO buildPaymentResponse(PaymentOrder order, String message) {
         return PaymentResponseDTO.builder()
-                .id(order.getId())
-                .paymentId(order.getId())
+                .razorpayOrderId(order.getRazorpayOrderId())
                 .bookingId(order.getBookingId())
+                .paymentId(order.getPaymentId())
                 .amount(order.getAmount())
                 .paymentStatus(order.getStatus().name())
                 .transactionId(order.getTransactionId())

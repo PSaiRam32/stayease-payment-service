@@ -13,38 +13,31 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: true
     properties:
       hibernate:
         format_sql: true
 
-# External Services Configuration
 services:
-  notification:
-    url: http://localhost:8087
   booking:
     url: http://localhost:8085
-  users:
-    url: http://localhost:8082
 
-# Razorpay Configuration (Test Mode)
-razorpay:
+Razorpay:
   key-id: rzp_test_Sf0goLCDZ1ev3P
   key-secret: Go22krJbTtjJcqLMh3ca9e2G
 
-# Logging Configuration
 logging:
   level:
     root: INFO
     com.stayease.payment_service: DEBUG
     org.springframework.web: INFO
     org.springframework.security: DEBUG
+    io.github.resilience4j: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
-# Swagger/OpenAPI Configuration
 springdoc:
   api-docs:
     path: /v3/api-docs
@@ -52,59 +45,52 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
-# Resilience4j Configuration
 resilience4j:
-  circuitbreaker:
-    instances:
-      razorpay-service:
-        registerHealthIndicator: true
-        slidingWindowSize: 10
-        failureRateThreshold: 50.0
-        waitDurationInOpenState: 30000
-      booking-service:
-        registerHealthIndicator: true
-        slidingWindowSize: 5
-        failureRateThreshold: 50.0
-        waitDurationInOpenState: 20000
-      notification-service:
-        registerHealthIndicator: true
-        slidingWindowSize: 5
-        failureRateThreshold: 60.0
-        waitDurationInOpenState: 15000
-
-  ratelimiter:
-    instances:
-      payment-api:
-        registerHealthIndicator: false
-        limitForPeriod: 200
-        limitRefreshPeriod: 1m
-        timeoutDuration: 5s
-      razorpay-api:
-        registerHealthIndicator: false
-        limitForPeriod: 50
-        limitRefreshPeriod: 10s
-        timeoutDuration: 3s
-
   retry:
     instances:
-      razorpay-retry:
-        maxAttempts: 3
-        waitDuration: 500
-      external-service-retry:
-        maxAttempts: 2
-        waitDuration: 300
+      razorpayRetry:
+        max-attempts: 3
+        wait-duration: 500ms
+      bookingRetry:
+        max-attempts: 3
+        wait-duration: 1s
+        retry-exceptions:
+          - feign.FeignException
+          - java.io.IOException
 
-# Payment Service Configuration
+  circuit breaker:
+    instances:
+      razorpayCB:
+        registerHealthIndicator: true
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+      bookingCB:
+        registerHealthIndicator: true
+        sliding-window-size: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 2
+  rate limiter:
+    instances:
+      paymentAPI:
+        limit-for-period: 200
+        limit-refresh-period: 1m
+        timeout-duration: 5s
+      razorpayAPI:
+        limit-for-period: 50
+        limit-refresh-period: 10s
+        timeout-duration: 3s
+
 payment:
   reconciliation:
-    interval: 300000 # 5 minutes
+    interval: 300000   # 5 min
   order:
-    expiry: 900 # 15 minutes in seconds
+    expiry: 900        # 15 min
   refund:
     enabled: true
     maxRefundDays: 30
 
-# Actuator Configuration for Monitoring
 management:
   endpoints:
     web:
@@ -117,13 +103,11 @@ management:
   endpoint:
     health:
       show-details: always
-    metrics:
-      enabled: true
 
 feign:
   client:
     config:
       default:
-        connectTimeout: 5000
+        connectTimeout: 3000
         readTimeout: 5000
         loggerLevel: FULL

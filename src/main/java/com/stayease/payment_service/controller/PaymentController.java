@@ -40,7 +40,7 @@ public class PaymentController {
     @Operation(summary = "Confirm payment", description = "Confirm payment after customer completes Razorpay payment flow")
     public ResponseEntity<ApiResponse<PaymentResponseDTO>> confirmPayment(
             @Valid @RequestBody PaymentConfirmationRequestDTO request) {
-        log.info("Confirming payment for orderId: {}", request.getOrderId());
+        log.info("Confirming payment for orderId: {}", request.getRazorpayOrderId());
         PaymentResponseDTO response = paymentService.confirmPayment(request);
         return ResponseEntity.ok(
                 new ApiResponse<>("SUCCESS", "Payment confirmed", response)
@@ -49,14 +49,21 @@ public class PaymentController {
 
     // ================= WEBHOOK =================
 
+//    @PostMapping("/webhook")
+//    @Operation(summary = "Payment webhook", description = "Webhook endpoint for Razorpay payment callbacks")
+//    public ResponseEntity<ApiResponse<String>> handleWebhook(@RequestBody WebhookPayloadDTO payload) {
+//        log.info("Received webhook event: {}", payload.getEvent());
+//        paymentService.handleWebhookCallback(payload);
+//        return ResponseEntity.ok(
+//                new ApiResponse<>("SUCCESS", "Webhook processed", "Acknowledged")
+//        );
+//    }
+
     @PostMapping("/webhook")
     @Operation(summary = "Payment webhook", description = "Webhook endpoint for Razorpay payment callbacks")
-    public ResponseEntity<ApiResponse<String>> handleWebhook(@RequestBody WebhookPayloadDTO payload) {
-        log.info("Received webhook event: {}", payload.getEvent());
-        paymentService.handleWebhookCallback(payload);
-        return ResponseEntity.ok(
-                new ApiResponse<>("SUCCESS", "Webhook processed", "Acknowledged")
-        );
+    public ResponseEntity<ApiResponse<String>> handleWebhook(@RequestBody String rawPayload, @RequestHeader("X-Razorpay-Signature") String signature) {
+        paymentService.handleWebhookCallback(rawPayload, signature);
+        return ResponseEntity.ok(new ApiResponse<>("SUCCESS", "Webhook processed", "Acknowledged"));
     }
 
     // ================= GET ORDER (DB ID) =================
@@ -64,9 +71,9 @@ public class PaymentController {
     @GetMapping("/order/{id}")
     @Operation(summary = "Get order by DB ID", description = "Fetch payment order using internal database ID")
     public ResponseEntity<ApiResponse<PaymentOrderResponseDTO>> getPaymentOrderById(
-            @PathVariable Long id) {
-        log.info("Fetching payment order by DB id: {}", id);
-        PaymentOrderResponseDTO response = paymentService.getPaymentOrderDetails(id);
+            @PathVariable Long paymentId) {
+        log.info("Fetching payment order by DB id: {}", paymentId);
+        PaymentOrderResponseDTO response = paymentService.getPaymentOrderDetails(paymentId);
         return ResponseEntity.ok(
                 new ApiResponse<>("SUCCESS", "Order details retrieved", response)
         );
@@ -105,7 +112,7 @@ public class PaymentController {
     @Operation(summary = "Initiate refund", description = "Initiate a refund for a confirmed payment")
     public ResponseEntity<ApiResponse<RefundResponseDTO>> initiateRefund(
             @Valid @RequestBody RefundRequestDTO request) {
-        log.info("Initiating refund for payment order: {}", request.getPaymentOrderId());
+        log.info("Initiating refund for payment order: {}", request.getPaymentId());
         RefundResponseDTO response = refundService.initiateRefund(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ApiResponse<>("SUCCESS", "Refund initiated", response));

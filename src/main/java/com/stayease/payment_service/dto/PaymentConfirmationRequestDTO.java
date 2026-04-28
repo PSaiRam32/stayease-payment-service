@@ -14,7 +14,7 @@ import lombok.NoArgsConstructor;
 public class PaymentConfirmationRequestDTO {
 
     @NotNull(message = "Order ID is required")
-    private Long orderId;
+    private Long paymentId;
     @NotBlank(message = "Razorpay Payment ID is required")
     private String razorpayPaymentId;
     @NotBlank(message = "Razorpay Order ID is required")

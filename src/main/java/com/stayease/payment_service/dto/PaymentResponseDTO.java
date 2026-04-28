@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class PaymentResponseDTO {
-    private Long id;
+    private String razorpayOrderId;
     private Long paymentId;
     private Long bookingId;
     private Double amount;

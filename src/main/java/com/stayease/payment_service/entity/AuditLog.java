@@ -23,10 +23,10 @@ public class AuditLog {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long paymentId;
 
     @Column(nullable = false)
-    private Long paymentOrderId;
+    private String razorpayOrderId;
 
     @Column(nullable = false)
     private String eventType; // e.g., ORDER_CREATED, PAYMENT_INITIATED, SIGNATURE_VERIFIED, BOOKING_UPDATED

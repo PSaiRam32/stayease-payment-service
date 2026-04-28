@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class PaymentOrderResponseDTO {
 
-    private Long id;
+    private Long paymentId;
     private Long bookingId;
     private Double amount;
     private String razorpayOrderId;

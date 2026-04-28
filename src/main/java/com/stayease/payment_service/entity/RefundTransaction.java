@@ -24,13 +24,12 @@ public class RefundTransaction {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long refundId;
+
+    private Long paymentId;
 
     @Column(nullable = false)
-    private Long paymentOrderId;
-
-    @Column(nullable = false, unique = true)
-    private String refundId;
+    private String razorpayOrderId;
 
     @Column(nullable = false)
     private Double amount;

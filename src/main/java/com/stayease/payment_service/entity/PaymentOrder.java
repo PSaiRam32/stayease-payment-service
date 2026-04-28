@@ -17,7 +17,7 @@ public class PaymentOrder {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long paymentId;
 
     @Column(nullable = false)
     private Long bookingId;

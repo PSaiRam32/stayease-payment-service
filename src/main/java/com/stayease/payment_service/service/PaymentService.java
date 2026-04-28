@@ -8,7 +8,7 @@ public interface PaymentService {
 
     PaymentOrderResponseDTO createPaymentOrder(PaymentOrderRequestDTO request);
 
-    PaymentOrderResponseDTO getPaymentOrderDetails(Long id);
+    PaymentOrderResponseDTO getPaymentOrderDetails(Long paymentId);
 
     PaymentOrderResponseDTO getByRazorpayOrderId(String razorpayOrderId);
 
@@ -16,7 +16,7 @@ public interface PaymentService {
 
     PaymentResponseDTO confirmPayment(PaymentConfirmationRequestDTO request);
 
-    void handleWebhookCallback(WebhookPayloadDTO payload);
+    void handleWebhookCallback(String rawPayload, String signature);
 
     // ================= TEST MODE =================
 

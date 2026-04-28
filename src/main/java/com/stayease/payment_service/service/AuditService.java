@@ -19,36 +19,29 @@ public class AuditService {
     private final AuditLogRepository auditLogRepository;
     private static final String CORRELATION_ID_HEADER = "X-Correlation-Id";
 
-    /**
-     * Log an event to audit log
-     */
-    public void logEvent(Long paymentOrderId, String eventType, String description) {
-        logEvent(paymentOrderId, eventType, description, null, null);
-    }
+//    /**
+//     * Log an event to audit log
+//     */
+//    public void logEvent(String razorpayOrderId, Long paymentOrderId, String eventType, String description) {
+//        logEvent(razorpayOrderId,paymentOrderId, eventType, description, null, null);
+//    }
 
-    /**
-     * Log an event with payload details
-     */
-    public void logEvent(Long paymentOrderId, String eventType, String description,
-                        String requestPayload, String responsePayload) {
+    public void logEvent( String razorpayOrderId,Long paymentId, String eventType, String description) {
         try {
             String correlationId = getCorrelationId();
-
             AuditLog auditLog = AuditLog.builder()
-                    .paymentOrderId(paymentOrderId)
+                    .razorpayOrderId(razorpayOrderId)
+                    .paymentId(paymentId)
                     .eventType(eventType)
                     .description(description)
                     .correlationId(correlationId)
-                    .requestPayload(requestPayload)
-                    .responsePayload(responsePayload)
                     .createdAt(LocalDateTime.now())
                     .build();
-
             auditLogRepository.save(auditLog);
             log.debug("Audit log created - Event: {}, OrderId: {}, CorrelationId: {}",
-                    eventType, paymentOrderId, correlationId);
+                    eventType, razorpayOrderId, correlationId);
         } catch (Exception e) {
-            log.error("Failed to create audit log for payment order: {}", paymentOrderId, e);
+            log.error("Failed to create audit log for payment order: {}", razorpayOrderId, e);
             // Don't throw - audit logging should not block business operations
         }
     }

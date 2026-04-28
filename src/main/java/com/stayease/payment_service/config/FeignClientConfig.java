@@ -14,6 +14,11 @@ public class FeignClientConfig {
     @Bean
     public RequestInterceptor requestInterceptor() {
         return requestTemplate -> {
+            String clientName = requestTemplate.feignTarget().name();
+            if ("razorpay-client".equals(clientName)) {
+                log.debug("Skipping JWT for Razorpay client");
+                return;
+            }
             ServletRequestAttributes attributes =
                     (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
 
@@ -25,13 +30,12 @@ public class FeignClientConfig {
 
                 if (authHeader != null) {
                     requestTemplate.header("Authorization", authHeader);
-                    log.debug("Authorization header propagated to Feign client");
+                    log.debug("Authorization header propagated");
                 }
+
                 if (correlationId != null) {
                     requestTemplate.header("X-Correlation-Id", correlationId);
-                    log.debug("Correlation ID propagated to Feign client: {}", correlationId);
                 }
-                log.debug("Feign request prepared for {}", requestTemplate.request().url());
             }
         };
     }
