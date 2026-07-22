@@ -6,6 +6,8 @@ public enum PaymentOrderStatus {
     PAYMENT_CONFIRMED, // Payment gateway confirmed
     PAYMENT_FAILED,    // Payment failed
     EXPIRED,           // Order expired
-    CANCELLED          // Order cancelled
+    CANCELLED,         // Order cancelled
+    REFUND_PENDING,
+    REFUNDED
 }
 

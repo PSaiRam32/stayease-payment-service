@@ -1,8 +1,7 @@
 package com.stayease.payment_service.service;
 
 import com.stayease.payment_service.config.RazorpayClient;
-import com.stayease.payment_service.dto.PaymentOrderRequestDTO;
-import com.stayease.payment_service.dto.WebhookPayloadDTO;
+import com.stayease.payment_service.dto.PaymentOrderRequest;
 import com.stayease.payment_service.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +27,7 @@ public class RazorpayIntegrationService {
     private String razorpayKeySecret;
 
 
-    public Map<String, Object> createOrder(PaymentOrderRequestDTO request) {
+    public Map<String, Object> createOrder(PaymentOrderRequest request) {
         log.info("Creating Razorpay order for booking: {}", request.getBookingId());
         try {
             Map<String, Object> orderRequest = new HashMap<>();

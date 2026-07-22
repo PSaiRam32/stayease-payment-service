@@ -2,15 +2,24 @@ package com.stayease.payment_service.service;
 
 import com.stayease.payment_service.dto.*;
 
+import java.util.List;
+
 public interface PaymentService {
 
     // ================= ORDER =================
 
-    PaymentOrderResponseDTO createPaymentOrder(PaymentOrderRequestDTO request);
+    PaymentOrderResponse createPaymentOrder(PaymentOrderRequest request);
 
-    PaymentOrderResponseDTO getPaymentOrderDetails(Long paymentId);
+    PaymentOrderResponse getPaymentOrderDetails(Long paymentId);
 
-    PaymentOrderResponseDTO getByRazorpayOrderId(String razorpayOrderId);
+    PaymentOrderResponse getByRazorpayOrderId(String razorpayOrderId);
+    List<PaymentHistoryResponse> getPaymentHistory();
+    PaymentResponseDTO retryFailedPayment(Long paymentId);
+    PaymentOrderResponse getPaymentByBookingId(Long bookingId);
+    RefundResponseDTO refundBooking(Long bookingId);
+    void expirePendingPayments();
+    ReceiptResponseDTO getReceipt(Long paymentId);
+    String getPaymentStatus(Long bookingId);
 
     // ================= PAYMENT =================
 

@@ -12,6 +12,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @Slf4j
 @RestController
 @RequestMapping("/payments")
@@ -26,10 +28,10 @@ public class PaymentController {
 
     @PostMapping("/order")
     @Operation(summary = "Create payment order", description = "Create a new payment order for a booking via Razorpay")
-    public ResponseEntity<ApiResponse<PaymentOrderResponseDTO>> createPaymentOrder(
-            @Valid @RequestBody PaymentOrderRequestDTO request) {
+    public ResponseEntity<ApiResponse<PaymentOrderResponse>> createPaymentOrder(
+            @Valid @RequestBody PaymentOrderRequest request) {
         log.info("Creating payment order for booking: {}", request.getBookingId());
-        PaymentOrderResponseDTO response = paymentService.createPaymentOrder(request);
+        PaymentOrderResponse response = paymentService.createPaymentOrder(request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(new ApiResponse<>("SUCCESS", "Payment order created", response));
     }
@@ -70,10 +72,10 @@ public class PaymentController {
 
     @GetMapping("/order/{id}")
     @Operation(summary = "Get order by DB ID", description = "Fetch payment order using internal database ID")
-    public ResponseEntity<ApiResponse<PaymentOrderResponseDTO>> getPaymentOrderById(
+    public ResponseEntity<ApiResponse<PaymentOrderResponse>> getPaymentOrderById(
             @PathVariable Long paymentId) {
         log.info("Fetching payment order by DB id: {}", paymentId);
-        PaymentOrderResponseDTO response = paymentService.getPaymentOrderDetails(paymentId);
+        PaymentOrderResponse response = paymentService.getPaymentOrderDetails(paymentId);
         return ResponseEntity.ok(
                 new ApiResponse<>("SUCCESS", "Order details retrieved", response)
         );
@@ -83,10 +85,10 @@ public class PaymentController {
 
     @GetMapping("/order/razorpay/{razorpayOrderId}")
     @Operation(summary = "Get order by Razorpay ID", description = "Fetch payment order using Razorpay order ID")
-    public ResponseEntity<ApiResponse<PaymentOrderResponseDTO>> getByRazorpayId(
+    public ResponseEntity<ApiResponse<PaymentOrderResponse>> getByRazorpayId(
             @PathVariable String razorpayOrderId) {
         log.info("Fetching payment order by Razorpay id: {}", razorpayOrderId);
-        PaymentOrderResponseDTO response =
+        PaymentOrderResponse response =
                 paymentService.getByRazorpayOrderId(razorpayOrderId);
         return ResponseEntity.ok(
                 new ApiResponse<>("SUCCESS", "Order details retrieved", response)
@@ -139,4 +141,107 @@ public class PaymentController {
                 new ApiResponse<>("SUCCESS", "Refund processing initiated", response)
         );
     }
+
+    @GetMapping("/history")
+    public ResponseEntity<ApiResponse<List<PaymentHistoryResponse>>> getPaymentHistory(){
+        List<PaymentHistoryResponse> history=paymentService.getPaymentHistory();
+        return ResponseEntity.ok(
+                new ApiResponse<>("SUCCESS", "Payment history fetched successfully.",history));
+    }
+
+    @PostMapping("/{paymentId}/retry")
+    public ResponseEntity<ApiResponse<PaymentResponseDTO>> retryPayment(@PathVariable Long paymentId){
+        PaymentResponseDTO response=paymentService.retryFailedPayment(paymentId);
+        return ResponseEntity.ok(new ApiResponse<>("SUCCESS", "Payment retried successfully.", response));
+    }
+
+    @PostMapping("/refund/{refundId}/complete")
+    public ResponseEntity<ApiResponse<String>> completeRefund(
+            @PathVariable Long refundId) {
+
+        refundService.completeRefund(refundId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>(
+                        "SUCCESS",
+                        "Refund completed successfully",
+                        "OK"));
+    }
+
+    @GetMapping("/booking/{bookingId}")
+    @Operation(
+            summary = "Get payment by booking ID",
+            description = "Fetch payment details using booking ID."
+    )
+    public ResponseEntity<ApiResponse<PaymentOrderResponse>> getPaymentByBookingId(
+            @PathVariable Long bookingId) {
+
+        log.info("Fetching payment for bookingId={}", bookingId);
+
+        PaymentOrderResponse response =
+                paymentService.getPaymentByBookingId(bookingId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>(
+                        "SUCCESS",
+                        "Payment fetched successfully",
+                        response
+                )
+        );
+    }
+    @PostMapping("/booking/{bookingId}/refund")
+    @Operation(
+            summary = "Refund booking",
+            description = "Initiate, process and complete refund for a booking."
+    )
+    public ResponseEntity<ApiResponse<RefundResponseDTO>> refundBooking(
+            @PathVariable Long bookingId) {
+
+        log.info("Processing refund for bookingId={}", bookingId);
+
+        RefundResponseDTO response =
+                paymentService.refundBooking(bookingId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>(
+                        "SUCCESS",
+                        "Refund processed successfully",
+                        response
+                )
+        );
+    }
+
+    @GetMapping("/booking/{bookingId}/status")
+    @Operation(
+            summary = "Get payment status",
+            description = "Fetch payment status for a booking."
+    )
+    public ResponseEntity<ApiResponse<String>> getPaymentStatus(
+            @PathVariable Long bookingId) {
+
+        String status = paymentService.getPaymentStatus(bookingId);
+
+        return ResponseEntity.ok(
+                new ApiResponse<>(
+                        "SUCCESS",
+                        "Payment status fetched successfully",
+                        status
+                )
+        );
+    }
+
+    @GetMapping("/{paymentId}/receipt")
+    public ResponseEntity<ApiResponse<ReceiptResponseDTO>> getReceipt(@PathVariable Long paymentId) {
+
+        ReceiptResponseDTO receipt =
+                paymentService.getReceipt(paymentId);
+
+        return ResponseEntity.ok(new ApiResponse<>("success",
+                "Receipt fetched successfully.",
+                receipt));
+    }
+
+
+
+
 }

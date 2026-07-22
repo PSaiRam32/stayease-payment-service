@@ -10,11 +10,7 @@ import java.time.LocalDateTime;
  * Tracks all refund requests and their status
  */
 @Entity
-@Table(name = "refund_transactions", indexes = {
-        @Index(name = "idx_payment_order_id", columnList = "paymentOrderId"),
-        @Index(name = "idx_refund_id", columnList = "refundId"),
-        @Index(name = "idx_status", columnList = "status")
-})
+@Table(name = "refund_transactions")
 @Getter
 @Setter
 @NoArgsConstructor
@@ -41,7 +37,8 @@ public class RefundTransaction {
     private String reason;
 
     @Column(nullable = false)
-    private String status; // INITIATED, PROCESSING, COMPLETED, FAILED
+    @Enumerated(EnumType.STRING)
+    private RefundStatus status;
 
     private String externalRefundId; // Reference from payment gateway
 

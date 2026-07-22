@@ -12,8 +12,11 @@ import io.github.resilience4j.retry.annotation.Retry;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 @Slf4j
@@ -25,6 +28,9 @@ public class PaymentServiceImpl implements PaymentService {
     private final RazorpayIntegrationService razorpayService;
     private final BookingServiceClient bookingServiceClient;
     private final AuditService auditService;
+    private final RefundService refundService;
+    private static final String DEFAULT_CURRENCY = "INR";
+    private static final int MAX_RETRY_ATTEMPTS = 3;
 
     @Retry(name = "bookingRetry")
     @CircuitBreaker(name = "bookingCB", fallbackMethod = "bookingConfirmFallback")
@@ -52,7 +58,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     @Transactional
-    public PaymentOrderResponseDTO createPaymentOrder(PaymentOrderRequestDTO request) {
+    public PaymentOrderResponse createPaymentOrder(PaymentOrderRequest request) {
         if (request.getBookingId() == null) {
             throw new BusinessException("Booking ID is required");
         }
@@ -78,6 +84,9 @@ public class PaymentServiceImpl implements PaymentService {
                     .amount(request.getAmount())
                     .razorpayOrderId(razorpayOrderId)
                     .status(PaymentOrderStatus.PENDING)
+                    .userId(request.getUserId())
+                    .currency(DEFAULT_CURRENCY)
+                    .receiptNumber(generateReceiptNumber())
                     .paymentMethod(request.getPaymentMethod())
                     .attemptCount(0)
                     .createdAt(LocalDateTime.now())
@@ -89,6 +98,47 @@ public class PaymentServiceImpl implements PaymentService {
         } catch (Exception e) {
             throw new BusinessException("Payment order creation failed: " + e.getMessage());
         }
+    }
+    private String generateReceiptNumber() {
+        return "STAY-PAY-" + System.currentTimeMillis();
+    }
+
+    private Long getCurrentUserId(){
+        Authentication authentication=SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new BusinessException("No authenticated user.");
+        }
+        return Long.parseLong(authentication.getName());
+    }
+    @Override
+    @Transactional
+    public List<PaymentHistoryResponse> getPaymentHistory(){
+        Long userId = getCurrentUserId();
+        return paymentOrderRepository
+                .findByUserIdOrderByCreatedAtDesc(userId)
+                .stream()
+                .map(this::mapToHistoryResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public PaymentResponseDTO retryFailedPayment(Long paymentId){
+        PaymentOrder paymentOrder = paymentOrderRepository.findById(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_FAILED){
+            throw new BusinessException("Only failed payments can be retried.");
+        }
+        if (paymentOrder.getAttemptCount() >= MAX_RETRY_ATTEMPTS){
+            throw new BusinessException("Maximum retry attempts exceeded.");
+        }
+        paymentOrder.setAttemptCount(paymentOrder.getAttemptCount()+1);
+        paymentOrder.setErrorMessage(null);
+        paymentOrder.setExpiredAt(LocalDateTime.now().plusMinutes(15));
+        paymentOrder.setStatus(PaymentOrderStatus.PENDING);
+        paymentOrderRepository.save(paymentOrder);
+        // Simulate payment retry
+        return buildPaymentResponse(paymentOrder, "Retry initiated successfully.");
     }
 
     // ================= CONFIRM PAYMENT =================
@@ -142,9 +192,9 @@ public class PaymentServiceImpl implements PaymentService {
     public void testConfirmPayment(String razorpayOrderId) {
         PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(razorpayOrderId)
                  .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
-        if (paymentOrder.getStatus() == PaymentOrderStatus.PAYMENT_CONFIRMED) {
-            log.warn("Already confirmed orderId={}", razorpayOrderId);
-            return;
+        if (paymentOrder.getStatus() != PaymentOrderStatus.PENDING
+                    && paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_FAILED) {
+            throw new BusinessException("Payment cannot be confirmed.");
         }
         paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
         paymentOrder.setTransactionId("TEST_TXN_" + System.currentTimeMillis());
@@ -215,7 +265,7 @@ public class PaymentServiceImpl implements PaymentService {
     // ================= GET BY DB ID =================
 
     @Override
-    public PaymentOrderResponseDTO getPaymentOrderDetails(Long id) {
+    public PaymentOrderResponse getPaymentOrderDetails(Long id) {
         PaymentOrder order = paymentOrderRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
         return mapOrderToDTO(order);
@@ -224,7 +274,7 @@ public class PaymentServiceImpl implements PaymentService {
     // ================= GET BY RAZORPAY ID =================
 
     @Override
-    public PaymentOrderResponseDTO getByRazorpayOrderId(String razorpayOrderId) {
+    public PaymentOrderResponse getByRazorpayOrderId(String razorpayOrderId) {
         PaymentOrder order = paymentOrderRepository
                 .findByRazorpayOrderId(razorpayOrderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
@@ -244,15 +294,62 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
+    @Override
+    public PaymentOrderResponse getPaymentByBookingId(Long bookingId) {
+
+        PaymentOrder paymentOrder = paymentOrderRepository
+                .findByBookingId(bookingId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Payment not found"));
+
+        return mapOrderToDTO(paymentOrder);
+    }
+
+    @Override
+    @Transactional
+    public RefundResponseDTO refundBooking(Long bookingId) {
+
+        log.info("Processing refund for bookingId={}", bookingId);
+
+        PaymentOrder paymentOrder = paymentOrderRepository
+                .findByBookingId(bookingId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Payment not found"));
+
+        RefundRequestDTO request = RefundRequestDTO.builder()
+                .paymentId(paymentOrder.getPaymentId())
+                .razorpayOrderId(paymentOrder.getRazorpayOrderId())
+                .refundAmount(paymentOrder.getAmount())
+                .currency(paymentOrder.getCurrency())
+                .reason("Booking Cancelled")
+                .build();
+
+        RefundResponseDTO refund = refundService.initiateRefund(request);
+
+        refund = refundService.processRefund(refund.getRefundId());
+
+        refundService.completeRefund(refund.getRefundId());
+
+        return refundService.getRefundDetails(refund.getRefundId());
+    }
+
     // ================= MAPPERS =================
 
-    private PaymentOrderResponseDTO mapOrderToDTO(PaymentOrder order) {
-        return PaymentOrderResponseDTO.builder()
+    private PaymentOrderResponse mapOrderToDTO(PaymentOrder order) {
+        return PaymentOrderResponse.builder()
                 .paymentId(order.getPaymentId())
                 .bookingId(order.getBookingId())
+                .userId(order.getUserId())
                 .amount(order.getAmount())
+                .refundAmount(order.getRefundAmount())
+                .currency(order.getCurrency())
+                .receiptNumber(order.getReceiptNumber())
                 .razorpayOrderId(order.getRazorpayOrderId())
                 .status(order.getStatus().name())
+                .paymentMethod(order.getPaymentMethod())
+                .createdAt(order.getCreatedAt())
+                .confirmedAt(order.getConfirmedAt())
+                .refundedAt(order.getRefundedAt())
                 .build();
     }
 
@@ -265,5 +362,103 @@ public class PaymentServiceImpl implements PaymentService {
                 .paymentStatus(order.getStatus().name())
                 .transactionId(order.getTransactionId())
                 .build();
+    }
+
+    private PaymentHistoryResponse mapToHistoryResponse(PaymentOrder payment) {
+        return PaymentHistoryResponse.builder()
+                .paymentId(payment.getPaymentId())
+                .bookingId(payment.getBookingId())
+                .amount(payment.getAmount())
+                .refundAmount(payment.getRefundAmount())
+                .paymentStatus(payment.getStatus().name())
+                .paymentMethod(payment.getPaymentMethod())
+                .currency(payment.getCurrency())
+                .receiptNumber(payment.getReceiptNumber())
+                .transactionId(payment.getTransactionId())
+                .createdAt(payment.getCreatedAt())
+                .confirmedAt(payment.getConfirmedAt())
+                .refundedAt(payment.getRefundedAt())
+                .build();
+    }
+    @Transactional
+    @Override
+    public void expirePendingPayments() {
+
+        List<PaymentOrder> expiredPayments =
+                paymentOrderRepository
+                        .findByStatusAndExpiredAtBefore(
+                                PaymentOrderStatus.PENDING,
+                                LocalDateTime.now());
+
+        for (PaymentOrder payment : expiredPayments) {
+
+            payment.setStatus(PaymentOrderStatus.EXPIRED);
+
+            paymentOrderRepository.save(payment);
+
+            try {
+
+                failBookingSafe(payment.getBookingId());
+
+            } catch (Exception ex) {
+
+                log.error(
+                        "Failed to update booking after payment expiry. bookingId={}",
+                        payment.getBookingId(),
+                        ex);
+            }
+
+            auditService.logEvent(
+                    payment.getRazorpayOrderId(),
+                    payment.getPaymentId(),
+                    "PAYMENT_EXPIRED",
+                    "Payment expired automatically after timeout.");
+
+            log.info(
+                    "Payment expired successfully. paymentId={}",
+                    payment.getPaymentId());
+        }
+    }
+
+    @Override
+    public ReceiptResponseDTO getReceipt(Long paymentId) {
+        PaymentOrder paymentOrder = paymentOrderRepository.findById(paymentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+
+        if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED
+                && paymentOrder.getStatus() != PaymentOrderStatus.REFUNDED
+                && paymentOrder.getStatus() != PaymentOrderStatus.REFUND_PENDING) {
+
+            throw new BusinessException(
+                    "Receipt is available only for completed payments.");
+        }
+
+        return ReceiptResponseDTO.builder()
+                .paymentId(paymentOrder.getPaymentId())
+                .bookingId(paymentOrder.getBookingId())
+                .userId(paymentOrder.getUserId())
+                .receiptNumber(paymentOrder.getReceiptNumber())
+                .razorpayOrderId(paymentOrder.getRazorpayOrderId())
+                .transactionId(paymentOrder.getTransactionId())
+                .amount(paymentOrder.getAmount())
+                .refundAmount(paymentOrder.getRefundAmount())
+                .currency(paymentOrder.getCurrency())
+                .paymentMethod(paymentOrder.getPaymentMethod())
+                .paymentStatus(paymentOrder.getStatus().name())
+                .createdAt(paymentOrder.getCreatedAt())
+                .confirmedAt(paymentOrder.getConfirmedAt())
+                .refundedAt(paymentOrder.getRefundedAt())
+                .build();
+    }
+
+    @Override
+    public String getPaymentStatus(Long bookingId) {
+
+        PaymentOrder paymentOrder = paymentOrderRepository
+                .findByBookingId(bookingId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException("Payment not found"));
+
+        return paymentOrder.getStatus().name();
     }
 }
