@@ -1,7 +1,7 @@
 package com.stayease.payment_service.service;
 
-import com.stayease.payment_service.dto.RefundRequestDTO;
-import com.stayease.payment_service.dto.RefundResponseDTO;
+import com.stayease.payment_service.dto.Request.RefundRequest;
+import com.stayease.payment_service.dto.Response.RefundResponse;
 import com.stayease.payment_service.entity.PaymentOrder;
 import com.stayease.payment_service.entity.PaymentOrderStatus;
 import com.stayease.payment_service.entity.RefundStatus;
@@ -16,7 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.UUID;
 
 /**
  * Service for handling payment refunds
@@ -25,7 +24,7 @@ import java.util.UUID;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class RefundServiceImpl implements RefundService {
+public class RefundServiceImpl implements RefundService{
 
     private final PaymentOrderRepository paymentOrderRepository;
     private final RefundTransactionRepository refundTransactionRepository;
@@ -34,29 +33,28 @@ public class RefundServiceImpl implements RefundService {
 
     @Override
     @Transactional
-    public RefundResponseDTO initiateRefund(RefundRequestDTO request) {
-        log.info("Initiating refund for order: {}", request.getRazorpayOrderId());
-        PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(request.getRazorpayOrderId())
+    public RefundResponse initiateRefund(RefundRequest request){
+        log.info("Initiating refund for order: {}",request.getRazorpayOrderId());
+        PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(request.getRazorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
         // Validate refund eligibility
         // 1. Validate payment status
-
-        if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED) {
+        if (paymentOrder.getStatus()!=PaymentOrderStatus.PAYMENT_CONFIRMED){
             throw new BusinessException("Only confirmed payments can be refunded.");
         }
-// 2. Validate refund amount
-        if (request.getRefundAmount() > paymentOrder.getAmount()) {
+        // 2. Validate refund amount
+        if (request.getRefundAmount()>paymentOrder.getAmount()){
             throw new BusinessException("Refund amount cannot exceed payment amount");
         }
-// 3. Check duplicate refund
-        if (refundTransactionRepository.existsByrazorpayOrderId(request.getRazorpayOrderId())) {
+        // 3. Check duplicate refund
+        if (refundTransactionRepository.existsByrazorpayOrderId(request.getRazorpayOrderId())){
             throw new BusinessException("Refund already processed for this payment");
         }
         paymentOrder.setStatus(PaymentOrderStatus.REFUND_PENDING);
         paymentOrderRepository.save(paymentOrder);
         try {
             // Create refund record
-            RefundTransaction refund = RefundTransaction.builder()
+            RefundTransaction refund=RefundTransaction.builder()
                     .razorpayOrderId(paymentOrder.getRazorpayOrderId())
                     .amount(request.getRefundAmount())
                     .currency(request.getCurrency() != null ? request.getCurrency() : "INR")
@@ -64,12 +62,12 @@ public class RefundServiceImpl implements RefundService {
                     .status(RefundStatus.INITIATED)
                     .createdAt(LocalDateTime.now())
                     .build();
-            refund = refundTransactionRepository.save(refund);
+            refund=refundTransactionRepository.save(refund);
             log.info("Refund initiated with ID: {}", refund.getRefundId());
             // Audit log
             auditService.logEvent(paymentOrder.getRazorpayOrderId(), paymentOrder.getPaymentId(),"REFUND_INITIATED",
                     "Refund initiated for amount: " + request.getRefundAmount());
-            return RefundResponseDTO.builder()
+            return RefundResponse.builder()
                     .refundId(refund.getRefundId())
                     .razorpayOrderId(paymentOrder.getRazorpayOrderId())
                     .amount(request.getRefundAmount())
@@ -77,28 +75,45 @@ public class RefundServiceImpl implements RefundService {
                     .reason(request.getReason())
                     .createdAt(refund.getCreatedAt())
                     .build();
-
-        } catch (Exception e) {
+        } catch (Exception e){
             log.error("Failed to initiate refund for order: {}", request.getRazorpayOrderId(), e);
             throw new BusinessException("Failed to initiate refund: " + e.getMessage());
         }
     }
 
+    @Override
+    public RefundResponse getRefundDetails(Long refundId){
+        log.info("Fetching refund details: {}", refundId);
+        RefundTransaction refund=refundTransactionRepository.findById(refundId)
+                .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
+        return RefundResponse.builder()
+                .refundId(refund.getRefundId())
+                .razorpayOrderId(refund.getRazorpayOrderId())
+                .amount(refund.getAmount())
+                .status(refund.getStatus().name())
+                .reason(refund.getReason())
+                .createdAt(refund.getCreatedAt())
+                .processedAt(refund.getProcessedAt())
+                .completedAt(refund.getCompletedAt())
+                .failureReason(refund.getFailureReason())
+                .build();
+    }
+
 
     @Override
     @Transactional
-    public RefundResponseDTO processRefund(Long refundId) {
-        log.info("Processing refund: {}", refundId);
-        RefundTransaction refund = refundTransactionRepository.findById(refundId)
+    public RefundResponse processRefund(Long refundId){
+        log.info("Processing refund: {}",refundId);
+        RefundTransaction refund=refundTransactionRepository.findById(refundId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
-        if (refund.getStatus() != RefundStatus.INITIATED) {
+        if (refund.getStatus()!=RefundStatus.INITIATED){
             throw new BusinessException("Refund cannot be processed in current status.");
         }
         try {
-            PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
+            PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
                     .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
             // Call Razorpay refund API (if transactionId exists)
-            if (paymentOrder.getTransactionId() != null) {
+            if (paymentOrder.getTransactionId()!=null) {
                 // In production, call actual Razorpay refund endpoint
                 log.debug("Processing refund via Razorpay for transaction: {}", paymentOrder.getTransactionId());
             }
@@ -108,7 +123,7 @@ public class RefundServiceImpl implements RefundService {
             auditService.logEvent(paymentOrder.getRazorpayOrderId(),paymentOrder.getPaymentId(), "REFUND_PROCESSING",
                     "Refund processing started for amount: " + refund.getAmount());
             log.info("Refund processing initiated: {}", refundId);
-            return RefundResponseDTO.builder()
+            return RefundResponse.builder()
                     .refundId(refund.getRefundId())
                     .razorpayOrderId(refund.getRazorpayOrderId())
                     .amount(refund.getAmount())
@@ -117,7 +132,7 @@ public class RefundServiceImpl implements RefundService {
                     .createdAt(refund.getCreatedAt())
                     .processedAt(refund.getProcessedAt())
                     .build();
-        } catch (Exception e) {
+        } catch (Exception e){
             refund.setStatus(RefundStatus.FAILED);
             refund.setFailureReason(e.getMessage());
             refundTransactionRepository.save(refund);
@@ -128,11 +143,11 @@ public class RefundServiceImpl implements RefundService {
 
     @Override
     @Transactional
-    public void completeRefund(Long refundId) {
-        log.info("Completing refund: {}", refundId);
-        RefundTransaction refund = refundTransactionRepository.findById(refundId)
+    public void completeRefund(Long refundId){
+        log.info("Completing refund: {}",refundId);
+        RefundTransaction refund=refundTransactionRepository.findById(refundId)
                 .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
-        PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
+        PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
         paymentOrder.setStatus(PaymentOrderStatus.REFUNDED);
         paymentOrder.setRefundAmount(refund.getAmount());
@@ -145,24 +160,6 @@ public class RefundServiceImpl implements RefundService {
         auditService.logEvent(refund.getRazorpayOrderId(),refund.getPaymentId(), "REFUND_COMPLETED",
                 "Refund completed for amount: " + refund.getAmount());
         log.info("Refund completed: {}", refundId);
-    }
-
-    @Override
-    public RefundResponseDTO getRefundDetails(Long refundId) {
-        log.info("Fetching refund details: {}", refundId);
-        RefundTransaction refund = refundTransactionRepository.findById(refundId)
-                .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
-        return RefundResponseDTO.builder()
-                .refundId(refund.getRefundId())
-                .razorpayOrderId(refund.getRazorpayOrderId())
-                .amount(refund.getAmount())
-                .status(refund.getStatus().name())
-                .reason(refund.getReason())
-                .createdAt(refund.getCreatedAt())
-                .processedAt(refund.getProcessedAt())
-                .completedAt(refund.getCompletedAt())
-                .failureReason(refund.getFailureReason())
-                .build();
     }
 }
 

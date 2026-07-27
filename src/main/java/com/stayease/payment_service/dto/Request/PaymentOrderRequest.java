@@ -1,4 +1,4 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Request;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
@@ -7,8 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
-public class PaymentOrderRequest {
-
+public class PaymentOrderRequest{
     @NotNull(message = "Booking ID is required")
     @Min(value = 1, message = "Booking ID must be greater than 0")
     private Long bookingId;

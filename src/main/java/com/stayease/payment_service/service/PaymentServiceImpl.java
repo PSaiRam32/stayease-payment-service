@@ -2,7 +2,10 @@ package com.stayease.payment_service.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.stayease.payment_service.config.BookingServiceClient;
-import com.stayease.payment_service.dto.*;
+import com.stayease.payment_service.dto.Request.PaymentConfirmationRequest;
+import com.stayease.payment_service.dto.Request.PaymentOrderRequest;
+import com.stayease.payment_service.dto.Request.RefundRequest;
+import com.stayease.payment_service.dto.Response.*;
 import com.stayease.payment_service.entity.*;
 import com.stayease.payment_service.exception.BusinessException;
 import com.stayease.payment_service.exception.ResourceNotFoundException;
@@ -18,6 +21,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -32,54 +36,27 @@ public class PaymentServiceImpl implements PaymentService {
     private static final String DEFAULT_CURRENCY = "INR";
     private static final int MAX_RETRY_ATTEMPTS = 3;
 
-    @Retry(name = "bookingRetry")
-    @CircuitBreaker(name = "bookingCB", fallbackMethod = "bookingConfirmFallback")
-    private void confirmBookingSafe(Long bookingId) {
-        bookingServiceClient.confirmBooking(bookingId);
-    }
-
-    private void bookingConfirmFallback(Long bookingId, Throwable ex) {
-        log.error("Booking confirm FAILED after payment success. bookingId={}", bookingId, ex);
-        // TODO: push to retry queue / DB
-    }
-
-    @Retry(name = "bookingRetry")
-    @CircuitBreaker(name = "bookingCB", fallbackMethod = "bookingFailFallback")
-    private void failBookingSafe(Long bookingId) {
-        bookingServiceClient.failBooking(bookingId);
-    }
-
-    private void bookingFailFallback(Long bookingId, Throwable ex) {
-        log.error("Booking fail FAILED. bookingId={}", bookingId, ex);
-        // TODO: push to retry queue / DB (future improvement)
-    }
-
     // ================= CREATE PAYMENT ORDER =================
 
     @Override
     @Transactional
-    public PaymentOrderResponse createPaymentOrder(PaymentOrderRequest request) {
-        if (request.getBookingId() == null) {
+    public PaymentOrderResponse createPaymentOrder(PaymentOrderRequest request){
+        log.info("Creating payment order for booking: {}", request.getBookingId());
+        if (request.getBookingId()==null){
             throw new BusinessException("Booking ID is required");
         }
-        if (request.getAmount() == null || request.getAmount() <= 0) {
+        if (request.getAmount()==null || request.getAmount()<=0){
             throw new BusinessException("Invalid payment amount");
         }
         log.info("Creating payment order for booking: {}", request.getBookingId());
-        paymentOrderRepository.findByBookingId(request.getBookingId())
-                .ifPresent(order -> {
-                    if (order.getStatus() != PaymentOrderStatus.EXPIRED &&
-                            order.getStatus() != PaymentOrderStatus.CANCELLED &&
-                            order.getStatus() != PaymentOrderStatus.PAYMENT_FAILED) {
-
-                        throw new BusinessException("Payment order already exists");
-                    }
-                });
-
+        Optional<PaymentOrder> existing=paymentOrderRepository.findByBookingId(request.getBookingId());
+        if (existing.isPresent()){
+            return mapOrderToDTO(existing.get());
+        }
         try {
-            Map<String, Object> razorpayOrder = razorpayService.createOrder(request);
-            String razorpayOrderId = (String) razorpayOrder.get("id");
-            PaymentOrder paymentOrder = PaymentOrder.builder()
+            Map<String, Object> razorpayOrder=razorpayService.createOrder(request);
+            String razorpayOrderId=(String) razorpayOrder.get("id");
+            PaymentOrder paymentOrder=PaymentOrder.builder()
                     .bookingId(request.getBookingId())
                     .amount(request.getAmount())
                     .razorpayOrderId(razorpayOrderId)
@@ -92,71 +69,32 @@ public class PaymentServiceImpl implements PaymentService {
                     .createdAt(LocalDateTime.now())
                     .expiredAt(LocalDateTime.now().plusMinutes(15))
                     .build();
-            PaymentOrder saved = paymentOrderRepository.save(paymentOrder);
+            PaymentOrder saved=paymentOrderRepository.save(paymentOrder);
             log.info("Payment order created successfully: {}", razorpayOrderId);
             return mapOrderToDTO(saved);
-        } catch (Exception e) {
-            throw new BusinessException("Payment order creation failed: " + e.getMessage());
         }
-    }
-    private String generateReceiptNumber() {
-        return "STAY-PAY-" + System.currentTimeMillis();
-    }
-
-    private Long getCurrentUserId(){
-        Authentication authentication=SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new BusinessException("No authenticated user.");
+        catch(BusinessException ex){
+            throw ex;
         }
-        return Long.parseLong(authentication.getName());
-    }
-    @Override
-    @Transactional
-    public List<PaymentHistoryResponse> getPaymentHistory(){
-        Long userId = getCurrentUserId();
-        return paymentOrderRepository
-                .findByUserIdOrderByCreatedAtDesc(userId)
-                .stream()
-                .map(this::mapToHistoryResponse)
-                .toList();
-    }
-
-    @Override
-    @Transactional
-    public PaymentResponseDTO retryFailedPayment(Long paymentId){
-        PaymentOrder paymentOrder = paymentOrderRepository.findById(paymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
-        if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_FAILED){
-            throw new BusinessException("Only failed payments can be retried.");
+        catch(Exception ex){
+            log.error("Payment creation failed", ex);
+            throw new BusinessException("Unable to create payment order.");
         }
-        if (paymentOrder.getAttemptCount() >= MAX_RETRY_ATTEMPTS){
-            throw new BusinessException("Maximum retry attempts exceeded.");
-        }
-        paymentOrder.setAttemptCount(paymentOrder.getAttemptCount()+1);
-        paymentOrder.setErrorMessage(null);
-        paymentOrder.setExpiredAt(LocalDateTime.now().plusMinutes(15));
-        paymentOrder.setStatus(PaymentOrderStatus.PENDING);
-        paymentOrderRepository.save(paymentOrder);
-        // Simulate payment retry
-        return buildPaymentResponse(paymentOrder, "Retry initiated successfully.");
     }
 
     // ================= CONFIRM PAYMENT =================
 
     @Override
     @Transactional
-    public PaymentResponseDTO confirmPayment(PaymentConfirmationRequestDTO request) {
-        PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(request.getRazorpayOrderId())
+    public PaymentResponse confirmPayment(PaymentConfirmationRequest request){
+        log.info("Confirming payment for orderId: {}", request.getRazorpayOrderId());
+        PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(request.getRazorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
-        if (paymentOrder.getStatus() == PaymentOrderStatus.PAYMENT_CONFIRMED) {
+        if (paymentOrder.getStatus()==PaymentOrderStatus.PAYMENT_CONFIRMED){
             return buildPaymentResponse(paymentOrder, "Already confirmed");
         }
-        if (!razorpayService.verifyPaymentSignature(
-                request.getRazorpayOrderId(),
-                request.getRazorpayPaymentId(),
-                request.getRazorpaySignature())) {
-
-            failPaymentInternal(paymentOrder, "Invalid signature");
+        if (!razorpayService.verifyPaymentSignature(request.getRazorpayOrderId(),request.getRazorpayPaymentId(),request.getRazorpaySignature())){
+            failPaymentInternal(paymentOrder,"Invalid signature");
             throw new BusinessException("Payment verification failed");
         }
         try {
@@ -174,15 +112,26 @@ public class PaymentServiceImpl implements PaymentService {
         } catch (Exception ex) {
             log.error("Booking sync failed after payment success", ex);
         }
+        auditService.logEvent(paymentOrder.getRazorpayOrderId(),paymentOrder.getPaymentId(),"PAYMENT_CONFIRMED","Success");
+        return buildPaymentResponse(paymentOrder,"Payment confirmed");
+    }
 
-        auditService.logEvent(
-                paymentOrder.getRazorpayOrderId(),
-                paymentOrder.getPaymentId(),
-                "PAYMENT_CONFIRMED",
-                "Success"
-        );
+    // ================= GET BY DB ID =================
 
-        return buildPaymentResponse(paymentOrder, "Payment confirmed");
+    @Override
+    public PaymentOrderResponse getPaymentOrderDetails(Long paymentId){
+        log.info("Fetching payment order by DB id: {}", paymentId);
+        PaymentOrder order=paymentOrderRepository.findById(paymentId).orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+        return mapOrderToDTO(order);
+    }
+
+    // ================= GET BY RAZORPAY ID =================
+
+    @Override
+    public PaymentOrderResponse getByRazorpayOrderId(String razorpayOrderId){
+        log.info("Fetching payment order by Razorpay id: {}",razorpayOrderId);
+        PaymentOrder order=paymentOrderRepository.findByRazorpayOrderId(razorpayOrderId).orElseThrow(() -> new ResourceNotFoundException("Order not found"));
+        return mapOrderToDTO(order);
     }
 
     // ================= TEST CONFIRM PAYMENT =================
@@ -190,18 +139,16 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     @Transactional
     public void testConfirmPayment(String razorpayOrderId) {
-        PaymentOrder paymentOrder = paymentOrderRepository.findByRazorpayOrderId(razorpayOrderId)
-                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
-        if (paymentOrder.getStatus() != PaymentOrderStatus.PENDING
-                    && paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_FAILED) {
+        log.warn("TEST PAYMENT TRIGGERED for orderId={}", razorpayOrderId);
+        PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(razorpayOrderId).orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
+        if (paymentOrder.getStatus()!=PaymentOrderStatus.PENDING&& paymentOrder.getStatus()!=PaymentOrderStatus.PAYMENT_FAILED){
             throw new BusinessException("Payment cannot be confirmed.");
         }
         paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
         paymentOrder.setTransactionId("TEST_TXN_" + System.currentTimeMillis());
         paymentOrder.setConfirmedAt(LocalDateTime.now());
         paymentOrderRepository.save(paymentOrder);
-        log.info("TEST PAYMENT SUCCESS for orderId={}, bookingId={}",
-                razorpayOrderId, paymentOrder.getBookingId());
+        log.info("TEST PAYMENT SUCCESS for orderId={}, bookingId={}",razorpayOrderId, paymentOrder.getBookingId());
         try {
             confirmBookingSafe(paymentOrder.getBookingId());
         } catch (Exception ex) {
@@ -210,230 +157,27 @@ public class PaymentServiceImpl implements PaymentService {
         auditService.logEvent(paymentOrder.getRazorpayOrderId(),paymentOrder.getPaymentId(), "TEST_PAYMENT_CONFIRMED", "Simulated success");
     }
 
-    // ================= WEBHOOK =================
-
     @Override
-    @Transactional
-    public void handleWebhookCallback(String rawPayload, String signature) {
-        try {
-            if (!razorpayService.verifyWebhookSignature(rawPayload, signature)) {
-                throw new BusinessException("Invalid webhook signature");
-            }
-            ObjectMapper mapper = new ObjectMapper();
-            WebhookPayloadDTO payload = mapper.readValue(rawPayload, WebhookPayloadDTO.class);
-            String event = payload.getEvent();
-            Map<String, Object> paymentObj =
-                    (Map<String, Object>) payload.getPayload().get("payment");
-            Map<String, Object> entity =
-                    (Map<String, Object>) paymentObj.get("entity");
-            String razorpayOrderId = (String) entity.get("order_id");
-            PaymentOrder paymentOrder = paymentOrderRepository
-                    .findByRazorpayOrderId(razorpayOrderId)
-                    .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
-            if (paymentOrder.getStatus() == PaymentOrderStatus.PAYMENT_CONFIRMED) {
-                log.warn("Webhook already processed for orderId={}", razorpayOrderId);
-                return;
-            }
-            if ("payment.captured".equals(event)) {
-                paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
-                paymentOrder.setConfirmedAt(LocalDateTime.now());
-                paymentOrderRepository.save(paymentOrder);
-                try {
-                    confirmBookingSafe(paymentOrder.getBookingId());
-                } catch (Exception ex) {
-                    log.error("Booking sync failed (webhook)", ex);
-                }
-                auditService.logEvent(
-                        razorpayOrderId,
-                        paymentOrder.getPaymentId(),
-                        "WEBHOOK_PAYMENT_CONFIRMED",
-                        "Captured via webhook"
-                );
-
-            } else if ("payment.failed".equals(event)) {
-                if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED) {
-                    failPaymentInternal(paymentOrder, "Webhook failure event");
-                }
-            } else {
-                log.info("Unhandled webhook event: {}", event);
-            }
-        } catch (Exception e) {
-            throw new BusinessException("Webhook processing failed: " + e.getMessage());
-        }
-    }
-
-    // ================= GET BY DB ID =================
-
-    @Override
-    public PaymentOrderResponse getPaymentOrderDetails(Long id) {
-        PaymentOrder order = paymentOrderRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
-        return mapOrderToDTO(order);
-    }
-
-    // ================= GET BY RAZORPAY ID =================
-
-    @Override
-    public PaymentOrderResponse getByRazorpayOrderId(String razorpayOrderId) {
-        PaymentOrder order = paymentOrderRepository
-                .findByRazorpayOrderId(razorpayOrderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Order not found"));
-        return mapOrderToDTO(order);
-    }
-
-    // ================= FAILURE =================
-
-    private void failPaymentInternal(PaymentOrder paymentOrder, String error) {
-        paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_FAILED);
-        paymentOrder.setErrorMessage(error);
-        paymentOrderRepository.save(paymentOrder);
-        try {
-            failBookingSafe(paymentOrder.getBookingId());
-        } catch (Exception ex) {
-            log.error("Booking fail sync failed", ex);
-        }
-    }
-
-    @Override
-    public PaymentOrderResponse getPaymentByBookingId(Long bookingId) {
-
-        PaymentOrder paymentOrder = paymentOrderRepository
-                .findByBookingId(bookingId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Payment not found"));
-
+    public PaymentOrderResponse getPaymentByBookingId(Long bookingId){
+        log.info("Fetching payment for bookingId={}",bookingId);
+        PaymentOrder paymentOrder=paymentOrderRepository.findByBookingId(bookingId).orElseThrow(() ->new ResourceNotFoundException("Payment not found"));
         return mapOrderToDTO(paymentOrder);
     }
 
     @Override
-    @Transactional
-    public RefundResponseDTO refundBooking(Long bookingId) {
-
-        log.info("Processing refund for bookingId={}", bookingId);
-
-        PaymentOrder paymentOrder = paymentOrderRepository
-                .findByBookingId(bookingId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Payment not found"));
-
-        RefundRequestDTO request = RefundRequestDTO.builder()
-                .paymentId(paymentOrder.getPaymentId())
-                .razorpayOrderId(paymentOrder.getRazorpayOrderId())
-                .refundAmount(paymentOrder.getAmount())
-                .currency(paymentOrder.getCurrency())
-                .reason("Booking Cancelled")
-                .build();
-
-        RefundResponseDTO refund = refundService.initiateRefund(request);
-
-        refund = refundService.processRefund(refund.getRefundId());
-
-        refundService.completeRefund(refund.getRefundId());
-
-        return refundService.getRefundDetails(refund.getRefundId());
-    }
-
-    // ================= MAPPERS =================
-
-    private PaymentOrderResponse mapOrderToDTO(PaymentOrder order) {
-        return PaymentOrderResponse.builder()
-                .paymentId(order.getPaymentId())
-                .bookingId(order.getBookingId())
-                .userId(order.getUserId())
-                .amount(order.getAmount())
-                .refundAmount(order.getRefundAmount())
-                .currency(order.getCurrency())
-                .receiptNumber(order.getReceiptNumber())
-                .razorpayOrderId(order.getRazorpayOrderId())
-                .status(order.getStatus().name())
-                .paymentMethod(order.getPaymentMethod())
-                .createdAt(order.getCreatedAt())
-                .confirmedAt(order.getConfirmedAt())
-                .refundedAt(order.getRefundedAt())
-                .build();
-    }
-
-    private PaymentResponseDTO buildPaymentResponse(PaymentOrder order, String message) {
-        return PaymentResponseDTO.builder()
-                .razorpayOrderId(order.getRazorpayOrderId())
-                .bookingId(order.getBookingId())
-                .paymentId(order.getPaymentId())
-                .amount(order.getAmount())
-                .paymentStatus(order.getStatus().name())
-                .transactionId(order.getTransactionId())
-                .build();
-    }
-
-    private PaymentHistoryResponse mapToHistoryResponse(PaymentOrder payment) {
-        return PaymentHistoryResponse.builder()
-                .paymentId(payment.getPaymentId())
-                .bookingId(payment.getBookingId())
-                .amount(payment.getAmount())
-                .refundAmount(payment.getRefundAmount())
-                .paymentStatus(payment.getStatus().name())
-                .paymentMethod(payment.getPaymentMethod())
-                .currency(payment.getCurrency())
-                .receiptNumber(payment.getReceiptNumber())
-                .transactionId(payment.getTransactionId())
-                .createdAt(payment.getCreatedAt())
-                .confirmedAt(payment.getConfirmedAt())
-                .refundedAt(payment.getRefundedAt())
-                .build();
-    }
-    @Transactional
-    @Override
-    public void expirePendingPayments() {
-
-        List<PaymentOrder> expiredPayments =
-                paymentOrderRepository
-                        .findByStatusAndExpiredAtBefore(
-                                PaymentOrderStatus.PENDING,
-                                LocalDateTime.now());
-
-        for (PaymentOrder payment : expiredPayments) {
-
-            payment.setStatus(PaymentOrderStatus.EXPIRED);
-
-            paymentOrderRepository.save(payment);
-
-            try {
-
-                failBookingSafe(payment.getBookingId());
-
-            } catch (Exception ex) {
-
-                log.error(
-                        "Failed to update booking after payment expiry. bookingId={}",
-                        payment.getBookingId(),
-                        ex);
-            }
-
-            auditService.logEvent(
-                    payment.getRazorpayOrderId(),
-                    payment.getPaymentId(),
-                    "PAYMENT_EXPIRED",
-                    "Payment expired automatically after timeout.");
-
-            log.info(
-                    "Payment expired successfully. paymentId={}",
-                    payment.getPaymentId());
-        }
+    public String getPaymentStatus(Long bookingId){
+        PaymentOrder paymentOrder = paymentOrderRepository.findByBookingId(bookingId).orElseThrow(() ->new ResourceNotFoundException("Payment not found"));
+        return paymentOrder.getStatus().name();
     }
 
     @Override
-    public ReceiptResponseDTO getReceipt(Long paymentId) {
-        PaymentOrder paymentOrder = paymentOrderRepository.findById(paymentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
-
-        if (paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED
-                && paymentOrder.getStatus() != PaymentOrderStatus.REFUNDED
-                && paymentOrder.getStatus() != PaymentOrderStatus.REFUND_PENDING) {
-
-            throw new BusinessException(
-                    "Receipt is available only for completed payments.");
+    public ReceiptResponse getReceipt(Long paymentId){
+        PaymentOrder paymentOrder=paymentOrderRepository.findById(paymentId).orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (paymentOrder.getStatus()!=PaymentOrderStatus.PAYMENT_CONFIRMED && paymentOrder.getStatus()!=PaymentOrderStatus.REFUNDED
+                && paymentOrder.getStatus()!=PaymentOrderStatus.REFUND_PENDING){
+            throw new BusinessException("Receipt is available only for completed payments.");
         }
-
-        return ReceiptResponseDTO.builder()
+        return ReceiptResponse.builder()
                 .paymentId(paymentOrder.getPaymentId())
                 .bookingId(paymentOrder.getBookingId())
                 .userId(paymentOrder.getUserId())
@@ -451,14 +195,212 @@ public class PaymentServiceImpl implements PaymentService {
                 .build();
     }
 
+
     @Override
-    public String getPaymentStatus(Long bookingId) {
+    @Transactional
+    public PaymentResponse retryFailedPayment(Long paymentId){
+        PaymentOrder paymentOrder=paymentOrderRepository.findById(paymentId).orElseThrow(() -> new ResourceNotFoundException("Payment not found"));
+        if (paymentOrder.getStatus()!=PaymentOrderStatus.PAYMENT_FAILED){
+            throw new BusinessException("Only failed payments can be retried.");
+        }
+        if (paymentOrder.getAttemptCount()>=MAX_RETRY_ATTEMPTS){
+            throw new BusinessException("Maximum retry attempts exceeded.");
+        }
+        paymentOrder.setAttemptCount(paymentOrder.getAttemptCount()+1);
+        paymentOrder.setErrorMessage(null);
+        paymentOrder.setExpiredAt(LocalDateTime.now().plusMinutes(15));
+        paymentOrder.setStatus(PaymentOrderStatus.PENDING);
+        paymentOrderRepository.save(paymentOrder);
+        // Simulate payment retry
+        return buildPaymentResponse(paymentOrder, "Retry initiated successfully.");
+    }
 
-        PaymentOrder paymentOrder = paymentOrderRepository
-                .findByBookingId(bookingId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Payment not found"));
+    @Override
+    @Transactional
+    public List<PaymentHistoryResponse> getPaymentHistory(){
+        Long userId = getCurrentUserId();
+        return paymentOrderRepository.findByUserIdOrderByCreatedAtDesc(userId)
+                .stream()
+                .map(this::mapToHistoryResponse)
+                .toList();
+    }
 
-        return paymentOrder.getStatus().name();
+    @Override
+    @Transactional
+    public RefundResponse refundBooking(Long bookingId){
+        log.info("Processing refund for bookingId={}",bookingId);
+        PaymentOrder paymentOrder=paymentOrderRepository.findByBookingId(bookingId)
+                .orElseThrow(() ->new ResourceNotFoundException("Payment not found"));
+        RefundRequest request=RefundRequest.builder()
+                .paymentId(paymentOrder.getPaymentId())
+                .razorpayOrderId(paymentOrder.getRazorpayOrderId())
+                .refundAmount(paymentOrder.getAmount())
+                .currency(paymentOrder.getCurrency())
+                .reason("Booking Cancelled")
+                .build();
+        RefundResponse refund=refundService.initiateRefund(request);
+        refund=refundService.processRefund(refund.getRefundId());
+        refundService.completeRefund(refund.getRefundId());
+        return refundService.getRefundDetails(refund.getRefundId());
+    }
+
+    @Transactional
+    @Override
+    public void expirePendingPayments(){
+        List<PaymentOrder> expiredPayments=paymentOrderRepository.findByStatusAndExpiredAtBefore(PaymentOrderStatus.PENDING,LocalDateTime.now());
+        for (PaymentOrder payment:expiredPayments){
+            payment.setStatus(PaymentOrderStatus.EXPIRED);
+            paymentOrderRepository.save(payment);
+            try {
+                failBookingSafe(payment.getBookingId());
+            }
+            catch(Exception ex){
+                log.error("Failed to update booking after payment expiry. bookingId={}",payment.getBookingId(),ex);
+            }
+            auditService.logEvent(payment.getRazorpayOrderId(),payment.getPaymentId(),"PAYMENT_EXPIRED","Payment expired automatically after timeout.");
+            log.info("Payment expired successfully. paymentId={}",payment.getPaymentId());
+        }
+    }
+
+    // ================= WEBHOOK =================
+
+    @Override
+    @Transactional
+    public void handleWebhookCallback(String rawPayload, String signature){
+        try {
+            if (!razorpayService.verifyWebhookSignature(rawPayload, signature)){
+                throw new BusinessException("Invalid webhook signature");
+            }
+            ObjectMapper mapper=new ObjectMapper();
+            WebhookPayload payload=mapper.readValue(rawPayload, WebhookPayload.class);
+            String event=payload.getEvent();
+            Map<String, Object> paymentObj=(Map<String, Object>) payload.getPayload().get("payment");
+            Map<String, Object> entity=(Map<String, Object>) paymentObj.get("entity");
+            String razorpayOrderId=(String) entity.get("order_id");
+            PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(razorpayOrderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
+            if(paymentOrder.getStatus()==PaymentOrderStatus.PAYMENT_CONFIRMED){
+                log.warn("Webhook already processed for orderId={}", razorpayOrderId);
+                return;
+            }
+            if("payment.captured".equals(event)){
+                paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
+                paymentOrder.setConfirmedAt(LocalDateTime.now());
+                paymentOrderRepository.save(paymentOrder);
+                try {
+                    confirmBookingSafe(paymentOrder.getBookingId());
+                }
+                catch (Exception ex){
+                    log.error("Booking sync failed (webhook)", ex);
+                }
+                auditService.logEvent(razorpayOrderId,paymentOrder.getPaymentId(),"WEBHOOK_PAYMENT_CONFIRMED","Captured via webhook");
+            }
+            else if("payment.failed".equals(event)){
+                if(paymentOrder.getStatus() != PaymentOrderStatus.PAYMENT_CONFIRMED){
+                    failPaymentInternal(paymentOrder, "Webhook failure event");
+                }
+            }
+            else{
+                log.info("Unhandled webhook event: {}", event);
+            }
+        }
+        catch(Exception e){
+            throw new BusinessException("Webhook processing failed: "+ e.getMessage());
+        }
+    }
+
+    @Retry(name="bookingRetry")
+    @CircuitBreaker(name="bookingCB",fallbackMethod="bookingConfirmFallback")
+    private void confirmBookingSafe(Long bookingId){
+        bookingServiceClient.confirmBooking(bookingId);
+    }
+
+    private void bookingConfirmFallback(Long bookingId, Throwable ex){
+        log.error("Booking confirm FAILED after payment success. bookingId={}", bookingId, ex);
+        // TODO: push to retry queue / DB
+    }
+
+    @Retry(name="bookingRetry")
+    @CircuitBreaker(name="bookingCB",fallbackMethod="bookingFailFallback")
+    private void failBookingSafe(Long bookingId){
+        bookingServiceClient.failBooking(bookingId);
+    }
+
+    private void bookingFailFallback(Long bookingId, Throwable ex) {
+        log.error("Booking fail FAILED. bookingId={}", bookingId, ex);
+        // TODO: push to retry queue / DB (future improvement)
+    }
+
+    private String generateReceiptNumber(){
+        return "STAY-PAY-" + System.currentTimeMillis();
+    }
+
+    private Long getCurrentUserId(){
+        Authentication authentication=SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()){
+            throw new BusinessException("No authenticated user.");
+        }
+        return Long.parseLong(authentication.getName());
+    }
+
+    // ================= FAILURE =================
+
+    private void failPaymentInternal(PaymentOrder paymentOrder,String error){
+        paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_FAILED);
+        paymentOrder.setErrorMessage(error);
+        paymentOrderRepository.save(paymentOrder);
+        try {
+            failBookingSafe(paymentOrder.getBookingId());
+        }
+        catch (Exception ex){
+            log.error("Booking fail sync failed", ex);
+        }
+    }
+
+    // ================= MAPPERS =================
+    private PaymentOrderResponse mapOrderToDTO(PaymentOrder order){
+        return PaymentOrderResponse.builder()
+                .paymentId(order.getPaymentId())
+                .bookingId(order.getBookingId())
+                .userId(order.getUserId())
+                .amount(order.getAmount())
+                .refundAmount(order.getRefundAmount())
+                .currency(order.getCurrency())
+                .receiptNumber(order.getReceiptNumber())
+                .razorpayOrderId(order.getRazorpayOrderId())
+                .status(order.getStatus().name())
+                .paymentMethod(order.getPaymentMethod())
+                .createdAt(order.getCreatedAt())
+                .confirmedAt(order.getConfirmedAt())
+                .refundedAt(order.getRefundedAt())
+                .build();
+    }
+
+    private PaymentResponse buildPaymentResponse(PaymentOrder order,String message){
+        return PaymentResponse.builder()
+                .razorpayOrderId(order.getRazorpayOrderId())
+                .bookingId(order.getBookingId())
+                .paymentId(order.getPaymentId())
+                .amount(order.getAmount())
+                .paymentStatus(order.getStatus().name())
+                .transactionId(order.getTransactionId())
+                .build();
+    }
+
+    private PaymentHistoryResponse mapToHistoryResponse(PaymentOrder payment){
+        return PaymentHistoryResponse.builder()
+                .paymentId(payment.getPaymentId())
+                .bookingId(payment.getBookingId())
+                .amount(payment.getAmount())
+                .refundAmount(payment.getRefundAmount())
+                .paymentStatus(payment.getStatus().name())
+                .paymentMethod(payment.getPaymentMethod())
+                .currency(payment.getCurrency())
+                .receiptNumber(payment.getReceiptNumber())
+                .transactionId(payment.getTransactionId())
+                .createdAt(payment.getCreatedAt())
+                .confirmedAt(payment.getConfirmedAt())
+                .refundedAt(payment.getRefundedAt())
+                .build();
     }
 }

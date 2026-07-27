@@ -1,4 +1,4 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Response;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -9,8 +9,7 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class WebhookPayloadDTO {
-
+public class WebhookPayload{
     private String event;
     private Map<String, Object> payload;
 }

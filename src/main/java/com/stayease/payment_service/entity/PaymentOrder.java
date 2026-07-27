@@ -5,16 +5,13 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "payment_orders", uniqueConstraints = {
-        @UniqueConstraint(columnNames = "bookingId", name = "uk_payment_order_booking_id")
-})
+@Table(name = "payment_orders")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PaymentOrder {
-
+public class PaymentOrder{
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long paymentId;

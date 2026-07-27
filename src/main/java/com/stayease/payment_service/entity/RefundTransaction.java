@@ -21,36 +21,24 @@ public class RefundTransaction {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long refundId;
-
     private Long paymentId;
-
     @Column(nullable = false)
     private String razorpayOrderId;
-
     @Column(nullable = false)
     private Double amount;
-
     @Column(nullable = false)
     private String currency;
-
     @Column(length = 500)
     private String reason;
-
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
     private RefundStatus status;
-
     private String externalRefundId; // Reference from payment gateway
-
     private String failureReason;
-
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
-
     private LocalDateTime processedAt;
-
     private LocalDateTime completedAt;
-
     @PrePersist
     public void prePersist() {
         this.createdAt = LocalDateTime.now();

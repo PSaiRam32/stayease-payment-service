@@ -8,15 +8,12 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class PaymentExpiryScheduler {
+public class PaymentExpiryScheduler{
 
     private final PaymentService paymentService;
 
     @Scheduled(fixedRate = 60000)
-    public void expirePayments() {
-
+    public void expirePayments(){
         paymentService.expirePendingPayments();
-
     }
-
 }

@@ -5,38 +5,30 @@ spring:
   application:
     name: payment-service
 
-  datasource:
-    url: jdbc:mysql://localhost:3306/stayease_payment_db
-    username: root
-    password: 2000030757
-    driver-class-name: com.mysql.cj.jdbc.Driver
+  profiles:
+    active: local
 
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-    properties:
-      hibernate:
-        format_sql: true
-
-services:
-  booking:
-    url: http://localhost:8085
-
-Razorpay:
-  key-id: rzp_test_Sf0goLCDZ1ev3P
-  key-secret: Go22krJbTtjJcqLMh3ca9e2G
+feign:
+  client:
+    config:
+      default:
+        logger-level: FULL
 
 logging:
   level:
     root: INFO
     com.stayease.payment_service: DEBUG
-    org.springframework.web: INFO
     org.springframework.security: DEBUG
+    org.springframework.web: INFO
     io.github.resilience4j: DEBUG
+
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
-    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+Razorpay:
+  key-id: rzp_test_Sf0goLCDZ1ev3P
+  key-secret: Go22krJbTtjJcqLMh3ca9e2G
 
 springdoc:
   api-docs:
@@ -51,6 +43,7 @@ resilience4j:
       razorpayRetry:
         max-attempts: 3
         wait-duration: 500ms
+
       bookingRetry:
         max-attempts: 3
         wait-duration: 1s
@@ -58,25 +51,28 @@ resilience4j:
           - feign.FeignException
           - java.io.IOException
 
-  circuit breaker:
+  circuitbreaker:
     instances:
       razorpayCB:
         registerHealthIndicator: true
         sliding-window-size: 10
         failure-rate-threshold: 50
         wait-duration-in-open-state: 30s
+
       bookingCB:
         registerHealthIndicator: true
         sliding-window-size: 5
         failure-rate-threshold: 50
         wait-duration-in-open-state: 10s
         permitted-number-of-calls-in-half-open-state: 2
-  rate limiter:
+
+  ratelimiter:
     instances:
       paymentAPI:
         limit-for-period: 200
         limit-refresh-period: 1m
         timeout-duration: 5s
+
       razorpayAPI:
         limit-for-period: 50
         limit-refresh-period: 10s
@@ -84,9 +80,11 @@ resilience4j:
 
 payment:
   reconciliation:
-    interval: 300000   # 5 min
+    interval: 300000
+
   order:
-    expiry: 900        # 15 min
+    expiry: 900
+
   refund:
     enabled: true
     maxRefundDays: 30
@@ -96,18 +94,189 @@ management:
     web:
       exposure:
         include: health,metrics,prometheus,info
+
   metrics:
     export:
       prometheus:
         enabled: true
+
   endpoint:
     health:
       show-details: always
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: local
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/stayease_payment_db
+    username: root
+    password: 2000030757
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
 
 feign:
   client:
     config:
       default:
-        connectTimeout: 3000
-        readTimeout: 5000
-        loggerLevel: FULL
+        connect-timeout: 3000
+        read-timeout: 5000
+
+services:
+  booking:
+    url: http://localhost:8085
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: test
+
+  datasource:
+    url: jdbc:mysql://test-db:3306/stayease_payment_db
+    username: test_user
+    password: test_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 3000
+        read-timeout: 5000
+
+services:
+  booking:
+    url: http://test-booking-service:8085
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: cut
+
+  datasource:
+    url: jdbc:mysql://cut-db:3306/stayease_payment_db
+    username: cut_user
+    password: cut_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 5000
+        read-timeout: 8000
+
+services:
+  booking:
+    url: http://cut-booking-service:8085
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: ete
+
+  datasource:
+    url: jdbc:mysql://ete-db:3306/stayease_payment_db
+    username: ete_user
+    password: ete_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 5000
+        read-timeout: 10000
+
+services:
+  booking:
+    url: http://ete-booking-service:8085
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: drt
+
+  datasource:
+    url: jdbc:mysql://drt-db:3306/stayease_payment_db
+    username: drt_user
+    password: drt_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 7000
+        read-timeout: 12000
+
+services:
+  booking:
+    url: http://drt-booking-service:8085
+
+---
+
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: jdbc:mysql://prod-db:3306/stayease_payment_db
+    username: DBName
+    password: DBPwd
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+feign:
+  client:
+    config:
+      default:
+        connect-timeout: 1000
+        read-timeout: 3000
+
+services:
+  booking:
+    url: http://booking-service

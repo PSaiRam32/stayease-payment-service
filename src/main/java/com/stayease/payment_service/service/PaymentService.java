@@ -1,33 +1,25 @@
 package com.stayease.payment_service.service;
 
-import com.stayease.payment_service.dto.*;
+import com.stayease.payment_service.dto.Request.PaymentConfirmationRequest;
+import com.stayease.payment_service.dto.Request.PaymentOrderRequest;
+import com.stayease.payment_service.dto.Response.*;
 
 import java.util.List;
 
 public interface PaymentService {
 
-    // ================= ORDER =================
-
     PaymentOrderResponse createPaymentOrder(PaymentOrderRequest request);
-
+    PaymentResponse confirmPayment(PaymentConfirmationRequest request);
     PaymentOrderResponse getPaymentOrderDetails(Long paymentId);
-
     PaymentOrderResponse getByRazorpayOrderId(String razorpayOrderId);
-    List<PaymentHistoryResponse> getPaymentHistory();
-    PaymentResponseDTO retryFailedPayment(Long paymentId);
-    PaymentOrderResponse getPaymentByBookingId(Long bookingId);
-    RefundResponseDTO refundBooking(Long bookingId);
-    void expirePendingPayments();
-    ReceiptResponseDTO getReceipt(Long paymentId);
-    String getPaymentStatus(Long bookingId);
-
-    // ================= PAYMENT =================
-
-    PaymentResponseDTO confirmPayment(PaymentConfirmationRequestDTO request);
-
-    void handleWebhookCallback(String rawPayload, String signature);
-
-    // ================= TEST MODE =================
-
     void testConfirmPayment(String razorpayOrderId);
+    PaymentOrderResponse getPaymentByBookingId(Long bookingId);
+    String getPaymentStatus(Long bookingId);
+    ReceiptResponse getReceipt(Long paymentId);
+    PaymentResponse retryFailedPayment(Long paymentId);
+    List<PaymentHistoryResponse> getPaymentHistory();
+    RefundResponse refundBooking(Long bookingId);
+    //Schedular Usage - Expire Pending Payments
+    void expirePendingPayments();
+    void handleWebhookCallback(String rawPayload, String signature);
 }
