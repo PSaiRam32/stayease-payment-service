@@ -9,11 +9,7 @@ import java.time.LocalDateTime;
  * Used for compliance, debugging, and transaction history
  */
 @Entity
-@Table(name = "payment_audit_logs", indexes = {
-        @Index(name = "idx_payment_order_id", columnList = "paymentOrderId"),
-        @Index(name = "idx_event_type", columnList = "eventType"),
-        @Index(name = "idx_created_at", columnList = "createdAt")
-})
+@Table(name = "payment_audit_logs")
 @Getter
 @Setter
 @NoArgsConstructor

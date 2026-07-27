@@ -12,8 +12,7 @@ import java.util.Optional;
 import java.util.List;
 
 @Repository
-public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long> {
-
+public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long>{
     Optional<PaymentOrder> findByBookingId(Long bookingId);
     Optional<PaymentOrder> findByRazorpayOrderId(String razorpayOrderId);
     List<PaymentOrder> findByStatus(PaymentOrderStatus status);
@@ -21,5 +20,7 @@ public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, Long
     List<PaymentOrder> findExpiredOrders(@Param("currentTime") LocalDateTime currentTime);
     @Query("SELECT COUNT(p) > 0 FROM PaymentOrder p WHERE p.bookingId = :bookingId AND p.status = :status")
     boolean existsByBookingIdAndStatus(@Param("bookingId") Long bookingId, @Param("status") PaymentOrderStatus status);
+    List<PaymentOrder> findByUserIdOrderByCreatedAtDesc(Long userId);
+    List<PaymentOrder> findByStatusAndExpiredAtBefore(PaymentOrderStatus status,LocalDateTime now);
 }
 

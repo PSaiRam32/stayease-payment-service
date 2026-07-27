@@ -1,6 +1,6 @@
 package com.stayease.payment_service.exception;
 
-import com.stayease.payment_service.dto.ApiResponse;
+import com.stayease.payment_service.dto.Response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

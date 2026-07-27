@@ -17,19 +17,13 @@ import java.time.LocalDateTime;
 public class AuditService {
 
     private final AuditLogRepository auditLogRepository;
-    private static final String CORRELATION_ID_HEADER = "X-Correlation-Id";
+    private static final String CORRELATION_ID_HEADER="X-Correlation-Id";
 
-//    /**
-//     * Log an event to audit log
-//     */
-//    public void logEvent(String razorpayOrderId, Long paymentOrderId, String eventType, String description) {
-//        logEvent(razorpayOrderId,paymentOrderId, eventType, description, null, null);
-//    }
 
-    public void logEvent( String razorpayOrderId,Long paymentId, String eventType, String description) {
+    public void logEvent(String razorpayOrderId,Long paymentId,String eventType,String description){
         try {
-            String correlationId = getCorrelationId();
-            AuditLog auditLog = AuditLog.builder()
+            String correlationId=getCorrelationId();
+            AuditLog auditLog=AuditLog.builder()
                     .razorpayOrderId(razorpayOrderId)
                     .paymentId(paymentId)
                     .eventType(eventType)
@@ -40,19 +34,19 @@ public class AuditService {
             auditLogRepository.save(auditLog);
             log.debug("Audit log created - Event: {}, OrderId: {}, CorrelationId: {}",
                     eventType, razorpayOrderId, correlationId);
-        } catch (Exception e) {
+        }
+        catch(Exception e){
             log.error("Failed to create audit log for payment order: {}", razorpayOrderId, e);
             // Don't throw - audit logging should not block business operations
         }
     }
 
-    private String getCorrelationId() {
+    private String getCorrelationId(){
         try {
-            ServletRequestAttributes attributes =
-                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-            if (attributes != null) {
-                Object correlationId = attributes.getRequest().getAttribute(CORRELATION_ID_HEADER);
-                if (correlationId != null) {
+            ServletRequestAttributes attributes=(ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes != null){
+                Object correlationId=attributes.getRequest().getAttribute(CORRELATION_ID_HEADER);
+                if (correlationId!=null) {
                     return correlationId.toString();
                 }
             }

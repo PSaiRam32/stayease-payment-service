@@ -1,4 +1,4 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class RefundResponseDTO {
+public class RefundResponse {
     private Long paymentId;
     private String razorpayOrderId;
     private Long refundId;

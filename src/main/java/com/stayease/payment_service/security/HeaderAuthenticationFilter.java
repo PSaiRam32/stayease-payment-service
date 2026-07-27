@@ -30,8 +30,7 @@ public class HeaderAuthenticationFilter extends OncePerRequestFilter {
     );
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    @Nonnull HttpServletResponse response,
+    protected void doFilterInternal(HttpServletRequest request,@Nonnull HttpServletResponse response,
                                     @Nonnull FilterChain filterChain)
             throws ServletException, IOException {
         String path = request.getRequestURI();

@@ -1,4 +1,4 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Response;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -9,7 +9,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class PaymentResponseDTO {
+public class PaymentResponse{
     private String razorpayOrderId;
     private Long paymentId;
     private Long bookingId;

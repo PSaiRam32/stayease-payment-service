@@ -1,12 +1,12 @@
 package com.stayease.payment_service.service;
 
 
-import com.stayease.payment_service.dto.RefundRequestDTO;
-import com.stayease.payment_service.dto.RefundResponseDTO;
+import com.stayease.payment_service.dto.Request.RefundRequest;
+import com.stayease.payment_service.dto.Response.RefundResponse;
 
-public interface RefundService  {
-    RefundResponseDTO initiateRefund(RefundRequestDTO request);
-    RefundResponseDTO processRefund(Long refundId);
+public interface RefundService {
+    RefundResponse initiateRefund(RefundRequest request);
+    RefundResponse getRefundDetails(Long refundId);
+    RefundResponse processRefund(Long refundId);
     void completeRefund(Long refundId);
-    RefundResponseDTO getRefundDetails(Long refundId);
 }

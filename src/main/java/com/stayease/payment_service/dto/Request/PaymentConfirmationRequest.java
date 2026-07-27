@@ -1,4 +1,4 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -11,8 +11,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class PaymentConfirmationRequestDTO {
-
+public class PaymentConfirmationRequest{
     @NotNull(message = "Order ID is required")
     private Long paymentId;
     @NotBlank(message = "Razorpay Payment ID is required")
