@@ -11,11 +11,7 @@ import org.springframework.web.bind.annotation.PutMapping;
  * Booking Service Feign Client
  * Communicates with Booking Service for status updates
  */
-@FeignClient(
-        name = "booking-service",
-        url = "${services.booking.url}",
-        configuration = FeignClientConfig.class
-)
+@FeignClient(name = "booking-service",configuration = FeignClientConfig.class)
 public interface BookingServiceClient {
 
     @PutMapping("/bookings/{id}/confirm")

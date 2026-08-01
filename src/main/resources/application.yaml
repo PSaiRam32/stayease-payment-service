@@ -1,6 +1,63 @@
 server:
   port: 8086
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+
+resilience4j:
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 2s
+        retry-exceptions:
+          - feign.RetryableException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+        ignore-exceptions:
+          - java.lang.IllegalArgumentException
+          - jakarta.validation.ValidationException
+    instances:
+      booking-service:
+        base-config: default
+      razorpay:
+        base-config: default
+
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        permitted-number-of-calls-in-half-open-state: 3
+        wait-duration-in-open-state: 30s
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - feign.FeignException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+    instances:
+      booking-service:
+        base-config: default
+      razorpay:
+        base-config: default
+
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 10
+        max-wait-duration: 2s
+    instances:
+      razorpay:
+        base-config: default
+
 spring:
   application:
     name: payment-service
@@ -20,7 +77,9 @@ logging:
     com.stayease.payment_service: DEBUG
     org.springframework.security: DEBUG
     org.springframework.web: INFO
-    io.github.resilience4j: DEBUG
+    io.github.resilience4j.retry: DEBUG
+    io.github.resilience4j.circuitbreaker: DEBUG
+    io.github.resilience4j.bulkhead: DEBUG
 
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
@@ -29,6 +88,7 @@ logging:
 Razorpay:
   key-id: rzp_test_Sf0goLCDZ1ev3P
   key-secret: Go22krJbTtjJcqLMh3ca9e2G
+  webhook-secret: razorpayWebhookSecret
 
 springdoc:
   api-docs:
@@ -37,46 +97,7 @@ springdoc:
     path: /swagger-ui.html
     operations-sorter: method
 
-resilience4j:
-  retry:
-    instances:
-      razorpayRetry:
-        max-attempts: 3
-        wait-duration: 500ms
 
-      bookingRetry:
-        max-attempts: 3
-        wait-duration: 1s
-        retry-exceptions:
-          - feign.FeignException
-          - java.io.IOException
-
-  circuitbreaker:
-    instances:
-      razorpayCB:
-        registerHealthIndicator: true
-        sliding-window-size: 10
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 30s
-
-      bookingCB:
-        registerHealthIndicator: true
-        sliding-window-size: 5
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 10s
-        permitted-number-of-calls-in-half-open-state: 2
-
-  ratelimiter:
-    instances:
-      paymentAPI:
-        limit-for-period: 200
-        limit-refresh-period: 1m
-        timeout-duration: 5s
-
-      razorpayAPI:
-        limit-for-period: 50
-        limit-refresh-period: 10s
-        timeout-duration: 3s
 
 payment:
   reconciliation:
@@ -88,21 +109,6 @@ payment:
   refund:
     enabled: true
     maxRefundDays: 30
-
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,metrics,prometheus,info
-
-  metrics:
-    export:
-      prometheus:
-        enabled: true
-
-  endpoint:
-    health:
-      show-details: always
 
 ---
 

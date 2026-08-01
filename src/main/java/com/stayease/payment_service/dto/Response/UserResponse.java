@@ -1,9 +1,9 @@
-package com.stayease.payment_service.dto;
+package com.stayease.payment_service.dto.Response;
 
 import lombok.Data;
 
 @Data
-public class UserResponseDTO {
+public class UserResponse {
 
     private Long userId;
     private String name;

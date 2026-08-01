@@ -1,7 +1,6 @@
 package com.stayease.payment_service.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.stayease.payment_service.config.BookingServiceClient;
 import com.stayease.payment_service.dto.Request.PaymentConfirmationRequest;
 import com.stayease.payment_service.dto.Request.PaymentOrderRequest;
 import com.stayease.payment_service.dto.Request.RefundRequest;
@@ -9,9 +8,8 @@ import com.stayease.payment_service.dto.Response.*;
 import com.stayease.payment_service.entity.*;
 import com.stayease.payment_service.exception.BusinessException;
 import com.stayease.payment_service.exception.ResourceNotFoundException;
+import com.stayease.payment_service.integrations.BookingServiceGateway;
 import com.stayease.payment_service.repository.PaymentOrderRepository;
-import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import io.github.resilience4j.retry.annotation.Retry;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -29,8 +28,9 @@ import java.util.Optional;
 public class PaymentServiceImpl implements PaymentService {
 
     private final PaymentOrderRepository paymentOrderRepository;
-    private final RazorpayIntegrationService razorpayService;
-    private final BookingServiceClient bookingServiceClient;
+    private final RazorpayVerificationService paymentVerificationService;
+    private final RazorpayOrderService  razorpayOrderService;
+    private final BookingServiceGateway bookingServiceGateway;
     private final AuditService auditService;
     private final RefundService refundService;
     private static final String DEFAULT_CURRENCY = "INR";
@@ -51,11 +51,24 @@ public class PaymentServiceImpl implements PaymentService {
         log.info("Creating payment order for booking: {}", request.getBookingId());
         Optional<PaymentOrder> existing=paymentOrderRepository.findByBookingId(request.getBookingId());
         if (existing.isPresent()){
-            return mapOrderToDTO(existing.get());
+            PaymentOrder payment=existing.get();
+            switch(payment.getStatus()){
+                case PAYMENT_CONFIRMED:
+                case PENDING:
+                case REFUND_PENDING:
+                case REFUNDED:
+                    return mapOrderToDTO(payment);
+                case PAYMENT_FAILED:
+                case EXPIRED:
+                    paymentOrderRepository.delete(payment);
+                    break;
+                default:
+                    break;
+            }
         }
         try {
-            Map<String, Object> razorpayOrder=razorpayService.createOrder(request);
-            String razorpayOrderId=(String) razorpayOrder.get("id");
+            RazorpayOrderResponse razorpayOrder=razorpayOrderService.createOrder(request);
+            String razorpayOrderId=razorpayOrder.getId();
             PaymentOrder paymentOrder=PaymentOrder.builder()
                     .bookingId(request.getBookingId())
                     .amount(request.getAmount())
@@ -93,12 +106,33 @@ public class PaymentServiceImpl implements PaymentService {
         if (paymentOrder.getStatus()==PaymentOrderStatus.PAYMENT_CONFIRMED){
             return buildPaymentResponse(paymentOrder, "Already confirmed");
         }
-        if (!razorpayService.verifyPaymentSignature(request.getRazorpayOrderId(),request.getRazorpayPaymentId(),request.getRazorpaySignature())){
+        if(paymentOrder.getExpiredAt()!=null &&paymentOrder.getExpiredAt().isBefore(LocalDateTime.now())){
+            failPaymentInternal(paymentOrder,"Payment order expired");
+            throw new BusinessException("Payment session has expired.");
+        }
+        if (!paymentVerificationService.verifyPaymentSignature(request.getRazorpayOrderId(),request.getRazorpayPaymentId(),request.getRazorpaySignature())){
             failPaymentInternal(paymentOrder,"Invalid signature");
             throw new BusinessException("Payment verification failed");
         }
         try {
-            razorpayService.getPaymentDetails(request.getRazorpayPaymentId());
+            RazorpayPaymentResponse payment=razorpayOrderService.getPaymentDetails(request.getRazorpayPaymentId());
+            if (!"captured".equals(payment.getStatus())) {
+                failPaymentInternal(paymentOrder, "Payment not captured");
+                throw new BusinessException("Payment is not captured.");
+            }
+            long expectedAmount=Math.round(paymentOrder.getAmount() * 100);
+            if (!payment.getAmount().equals(expectedAmount)){
+                failPaymentInternal(paymentOrder,"Amount mismatch");
+                throw new BusinessException("Payment amount mismatch.");
+            }
+            if (!paymentOrder.getCurrency().equalsIgnoreCase(payment.getCurrency())){
+                failPaymentInternal(paymentOrder,"Currency mismatch");
+                throw new BusinessException("Currency mismatch.");
+            }
+            if (!paymentOrder.getRazorpayOrderId().equals(payment.getOrder_id())){
+                failPaymentInternal(paymentOrder,"Order mismatch");
+                throw new BusinessException("Order mismatch.");
+            }
             paymentOrder.setStatus(PaymentOrderStatus.PAYMENT_CONFIRMED);
             paymentOrder.setTransactionId(request.getRazorpayPaymentId());
             paymentOrder.setConfirmedAt(LocalDateTime.now());
@@ -108,7 +142,7 @@ public class PaymentServiceImpl implements PaymentService {
             throw new BusinessException("Payment failed: " + e.getMessage());
         }
         try {
-            confirmBookingSafe(paymentOrder.getBookingId());
+            bookingServiceGateway.confirmBooking(paymentOrder.getBookingId());
         } catch (Exception ex) {
             log.error("Booking sync failed after payment success", ex);
         }
@@ -150,7 +184,7 @@ public class PaymentServiceImpl implements PaymentService {
         paymentOrderRepository.save(paymentOrder);
         log.info("TEST PAYMENT SUCCESS for orderId={}, bookingId={}",razorpayOrderId, paymentOrder.getBookingId());
         try {
-            confirmBookingSafe(paymentOrder.getBookingId());
+            bookingServiceGateway.confirmBooking(paymentOrder.getBookingId());
         } catch (Exception ex) {
             log.error("Booking sync failed (test)", ex);
         }
@@ -206,10 +240,19 @@ public class PaymentServiceImpl implements PaymentService {
         if (paymentOrder.getAttemptCount()>=MAX_RETRY_ATTEMPTS){
             throw new BusinessException("Maximum retry attempts exceeded.");
         }
+        PaymentOrderRequest retryRequest=PaymentOrderRequest.builder()
+                        .bookingId(paymentOrder.getBookingId())
+                        .userId(paymentOrder.getUserId())
+                        .amount(paymentOrder.getAmount())
+                        .paymentMethod(paymentOrder.getPaymentMethod())
+                        .build();
+        RazorpayOrderResponse order=razorpayOrderService.createOrder(retryRequest);
+
+        paymentOrder.setRazorpayOrderId(order.getId());
+        paymentOrder.setStatus(PaymentOrderStatus.PENDING);
+        paymentOrder.setExpiredAt(LocalDateTime.now().plusMinutes(15));
         paymentOrder.setAttemptCount(paymentOrder.getAttemptCount()+1);
         paymentOrder.setErrorMessage(null);
-        paymentOrder.setExpiredAt(LocalDateTime.now().plusMinutes(15));
-        paymentOrder.setStatus(PaymentOrderStatus.PENDING);
         paymentOrderRepository.save(paymentOrder);
         // Simulate payment retry
         return buildPaymentResponse(paymentOrder, "Retry initiated successfully.");
@@ -252,7 +295,7 @@ public class PaymentServiceImpl implements PaymentService {
             payment.setStatus(PaymentOrderStatus.EXPIRED);
             paymentOrderRepository.save(payment);
             try {
-                failBookingSafe(payment.getBookingId());
+                bookingServiceGateway.failBooking(payment.getBookingId());
             }
             catch(Exception ex){
                 log.error("Failed to update booking after payment expiry. bookingId={}",payment.getBookingId(),ex);
@@ -268,7 +311,7 @@ public class PaymentServiceImpl implements PaymentService {
     @Transactional
     public void handleWebhookCallback(String rawPayload, String signature){
         try {
-            if (!razorpayService.verifyWebhookSignature(rawPayload, signature)){
+            if (!paymentVerificationService.verifyWebhookSignature(rawPayload, signature)){
                 throw new BusinessException("Invalid webhook signature");
             }
             ObjectMapper mapper=new ObjectMapper();
@@ -288,7 +331,7 @@ public class PaymentServiceImpl implements PaymentService {
                 paymentOrder.setConfirmedAt(LocalDateTime.now());
                 paymentOrderRepository.save(paymentOrder);
                 try {
-                    confirmBookingSafe(paymentOrder.getBookingId());
+                    bookingServiceGateway.confirmBooking(paymentOrder.getBookingId());
                 }
                 catch (Exception ex){
                     log.error("Booking sync failed (webhook)", ex);
@@ -309,30 +352,8 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
-    @Retry(name="bookingRetry")
-    @CircuitBreaker(name="bookingCB",fallbackMethod="bookingConfirmFallback")
-    private void confirmBookingSafe(Long bookingId){
-        bookingServiceClient.confirmBooking(bookingId);
-    }
-
-    private void bookingConfirmFallback(Long bookingId, Throwable ex){
-        log.error("Booking confirm FAILED after payment success. bookingId={}", bookingId, ex);
-        // TODO: push to retry queue / DB
-    }
-
-    @Retry(name="bookingRetry")
-    @CircuitBreaker(name="bookingCB",fallbackMethod="bookingFailFallback")
-    private void failBookingSafe(Long bookingId){
-        bookingServiceClient.failBooking(bookingId);
-    }
-
-    private void bookingFailFallback(Long bookingId, Throwable ex) {
-        log.error("Booking fail FAILED. bookingId={}", bookingId, ex);
-        // TODO: push to retry queue / DB (future improvement)
-    }
-
     private String generateReceiptNumber(){
-        return "STAY-PAY-" + System.currentTimeMillis();
+        return "STAY-PAY-" + UUID.randomUUID().toString().substring(0,8).toUpperCase();
     }
 
     private Long getCurrentUserId(){
@@ -350,7 +371,7 @@ public class PaymentServiceImpl implements PaymentService {
         paymentOrder.setErrorMessage(error);
         paymentOrderRepository.save(paymentOrder);
         try {
-            failBookingSafe(paymentOrder.getBookingId());
+            bookingServiceGateway.failBooking(paymentOrder.getBookingId());
         }
         catch (Exception ex){
             log.error("Booking fail sync failed", ex);

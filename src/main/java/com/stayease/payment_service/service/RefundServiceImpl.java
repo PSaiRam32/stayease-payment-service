@@ -1,6 +1,7 @@
 package com.stayease.payment_service.service;
 
 import com.stayease.payment_service.dto.Request.RefundRequest;
+import com.stayease.payment_service.dto.Response.RazorpayRefundResponse;
 import com.stayease.payment_service.dto.Response.RefundResponse;
 import com.stayease.payment_service.entity.PaymentOrder;
 import com.stayease.payment_service.entity.PaymentOrderStatus;
@@ -28,8 +29,8 @@ public class RefundServiceImpl implements RefundService{
 
     private final PaymentOrderRepository paymentOrderRepository;
     private final RefundTransactionRepository refundTransactionRepository;
-    private final RazorpayIntegrationService razorpayService;
     private final AuditService auditService;
+    private final RazorpayOrderService razorpayOrderService;
 
     @Override
     @Transactional
@@ -113,9 +114,13 @@ public class RefundServiceImpl implements RefundService{
             PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
                     .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
             // Call Razorpay refund API (if transactionId exists)
-            if (paymentOrder.getTransactionId()!=null) {
-                // In production, call actual Razorpay refund endpoint
-                log.debug("Processing refund via Razorpay for transaction: {}", paymentOrder.getTransactionId());
+            if (paymentOrder.getTransactionId()==null){
+                throw new BusinessException("Transaction Id not available.");
+            }
+            else{
+                RazorpayRefundResponse refundResponse=
+                        razorpayOrderService.refundPayment(paymentOrder.getTransactionId(),refund.getAmount());
+                log.info("Refund created in Razorpay: {}",refundResponse.getId());
             }
             refund.setStatus(RefundStatus.PROCESSING);
             refund.setProcessedAt(LocalDateTime.now());
@@ -149,6 +154,9 @@ public class RefundServiceImpl implements RefundService{
                 .orElseThrow(() -> new ResourceNotFoundException("Refund not found"));
         PaymentOrder paymentOrder=paymentOrderRepository.findByRazorpayOrderId(refund.getRazorpayOrderId())
                 .orElseThrow(() -> new ResourceNotFoundException("Payment order not found"));
+        if(paymentOrder.getStatus()==PaymentOrderStatus.REFUNDED){
+            return;
+        }
         paymentOrder.setStatus(PaymentOrderStatus.REFUNDED);
         paymentOrder.setRefundAmount(refund.getAmount());
         paymentOrder.setRefundedAt(LocalDateTime.now());

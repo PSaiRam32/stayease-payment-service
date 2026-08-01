@@ -1,5 +1,9 @@
 package com.stayease.payment_service.config;
 
+import com.stayease.payment_service.dto.Request.RazorpayRefundRequest;
+import com.stayease.payment_service.dto.Response.RazorpayOrderResponse;
+import com.stayease.payment_service.dto.Response.RazorpayPaymentResponse;
+import com.stayease.payment_service.dto.Response.RazorpayRefundResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.*;
 
@@ -20,18 +24,21 @@ public interface RazorpayClient {
      * Create a new order in Razorpay
      */
     @PostMapping("/orders")
-    Map<String, Object> createOrder(@RequestBody Map<String, Object> orderRequest);
+    RazorpayOrderResponse createOrder(@RequestBody Map<String, Object> orderRequest);
 
     /**
      * Verify payment after completion
      */
     @GetMapping("/payments/{paymentId}")
-    Map<String, Object> getPaymentDetails(@PathVariable String paymentId);
+    RazorpayPaymentResponse getPaymentDetails(@PathVariable String paymentId);
 
     /**
      * Fetch order details
      */
     @GetMapping("/orders/{orderId}")
-    Map<String, Object> getOrderDetails(@PathVariable String orderId);
+    RazorpayOrderResponse getOrderDetails(@PathVariable String orderId);
+
+    @PostMapping("/payments/{paymentId}/refund")
+    RazorpayRefundResponse refundPayment(@PathVariable String paymentId,@RequestBody RazorpayRefundRequest request);
 }
 

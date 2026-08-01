@@ -16,10 +16,15 @@ java {
 description ='Payment Service'
 repositories {
 	mavenCentral()
+	maven { url "https://repo.spring.io/release" }
 }
+ext {
+	set('springCloudVersion', "2023.0.2")
+}
+
 dependencyManagement {
 	imports {
-		mavenBom "org.springframework.cloud:spring-cloud-dependencies:2023.0.0"
+		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
 	}
 }
 
@@ -29,28 +34,18 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.cloud:spring-cloud-starter-openfeign'
-
+	implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.2.0'
+	implementation 'org.springframework.boot:spring-boot-starter-aop'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0'
-
-	implementation 'com.razorpay:razorpay-java:1.4.3'
-
 	// Razorpay integration
 	implementation 'com.razorpay:razorpay-java:1.4.3'
-
 	// Logging
 	implementation 'org.springframework.boot:spring-boot-starter-logging'
 
 	// Correlation ID handling
 	implementation 'org.springframework.boot:spring-boot-starter-aop'
-
-	// Resilience4J for Circuit Breaker, Rate Limiting, Retry
-	implementation 'io.github.resilience4j:resilience4j-spring-boot3:2.1.0'
-	implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.1.0'
-	implementation 'io.github.resilience4j:resilience4j-ratelimiter:2.1.0'
-	implementation 'io.github.resilience4j:resilience4j-retry:2.1.0'
-
-	// Actuator for monitoring
-	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
 	// Micrometer for metrics
 	implementation 'io.micrometer:micrometer-registry-prometheus:1.12.0'
