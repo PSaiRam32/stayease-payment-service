@@ -15,13 +15,15 @@
 
 # 📖 Overview
 
-The **StayEase Payment Service** is responsible for managing the complete payment lifecycle within the StayEase microservices ecosystem.
+The **StayEase Payment Service** is the financial transaction domain of the StayEase microservices platform, responsible for managing the complete payment lifecycle for hostel and PG bookings.
 
-As the financial transaction domain of the platform, the Payment Service handles payment order creation, payment confirmation, payment verification, refund processing, receipt generation, audit logging, scheduled payment expiration, and secure communication with external payment gateways.
+The service handles payment order creation, payment confirmation, payment verification, payment retries, refund processing, receipt generation, audit logging, scheduled payment expiration, and secure webhook processing through Razorpay.
 
-The service integrates with the Booking Service to coordinate reservation payments and communicates with the Razorpay Payment Gateway for payment order creation, payment verification, and webhook processing.
+Built using **Spring Boot**, **Spring Data JPA**, **Spring Security**, **OpenFeign**, and **Netflix Eureka**, the service follows enterprise-grade microservice architecture principles with **Database per Service**, **Service Discovery**, **Gateway Pattern**, **Resilience4j Fault Tolerance**, **Spring Boot Actuator**, and **Micrometer Monitoring**.
 
-Designed using Spring Boot and Spring Data JPA, the Payment Service follows enterprise microservices principles by maintaining dedicated ownership of financial transactions while collaborating with other services through well-defined APIs.
+Inter-service communication is performed through dedicated Service Gateway classes, providing retry mechanisms, circuit breakers, bulkheads, and fallback handling for resilient communication with Booking Service and Razorpay APIs.
+
+The service also implements structured audit logging, correlation ID propagation, scheduled background jobs, JWT-based authentication, environment-based configuration, and production-ready monitoring capabilities while maintaining complete ownership of financial transactions within the StayEase ecosystem.
 
 ---
 
@@ -84,23 +86,31 @@ Once the frontend is integrated, payment confirmation will occur through the sta
 This project demonstrates several enterprise backend engineering concepts commonly adopted in production systems.
 
 - Database per Service
-- Payment Lifecycle Management
-- External Payment Gateway Integration
+- Domain-Driven Service Separation
 - Layered Architecture
-- OpenFeign Client Communication
+- Service Discovery (Netflix Eureka)
+- Gateway Pattern for Inter-Service Communication
+- OpenFeign Declarative REST Clients
+- External Payment Gateway Integration (Razorpay)
+- Resilience4j Retry
+- Resilience4j Circuit Breaker
+- Resilience4j Bulkhead
+- Fallback Strategies
+- Spring Boot Actuator
+- Micrometer Metrics
+- Prometheus Monitoring Ready
+- Payment Lifecycle Management
 - Secure Payment Verification
 - Refund Management
 - Receipt Generation
 - Audit Logging
-- Webhook Processing
+- Correlation ID Propagation
+- JWT Header Propagation
 - Scheduled Background Jobs
 - Bean Validation
 - Global Exception Handling
 - Structured Logging
 - Transaction Management
-- Resilience4j Retry
-- Resilience4j Circuit Breaker
-- Domain-Driven Service Separation
 
 ---
 
@@ -130,11 +140,13 @@ The Payment Service has been designed with the following objectives:
 - Payment Status Tracking
 - Payment History
 - Retry Failed Payments
+- Payment Expiration Scheduler
 
 ---
 
 ## 💰 Refund Management
 
+- Complete Refund Lifecycle
 - Refund Processing
 - Refund Status Tracking
 - Booking Refund Coordination
@@ -150,42 +162,53 @@ The Payment Service has been designed with the following objectives:
 
 ## 🔐 Payment Security
 
+- JWT Authentication
+- Header Authentication Filter
 - Razorpay Signature Verification
 - Secure Payment Validation
-- Payment Status Verification
+- Correlation ID Propagation
 
 ---
 
-## 📩 Gateway Integration
+## 🌐 External Integrations
 
-- Razorpay Order Creation
-- Razorpay Webhook Processing
-- Payment Synchronization
-
----
-
-## 📋 Audit & Background Processing
-
-- Audit Logging
-- Scheduled Expiration of Pending Payments
-
----
-
-## 🔄 Service Communication
-
+- Razorpay REST APIs
 - Booking Service Integration
+- Service Gateway Pattern
+- Netflix Eureka Service Discovery
 - OpenFeign Communication
 
 ---
 
-## 🚀 Reliability
+## 🛡 Reliability
 
-- Resilience4j Retry
-- Resilience4j Circuit Breaker
+- Retry
+- Circuit Breaker
+- Bulkhead
+- Fallback Handling
 - Global Exception Handling
 - Bean Validation
-- Structured Logging
 - Transaction Management
+
+---
+
+## 📊 Monitoring
+
+- Spring Boot Actuator
+- Micrometer Metrics
+- Prometheus Ready
+- Health Endpoints
+- Metrics Endpoints
+- Structured Logging
+- Audit Logging
+
+---
+
+## ⚙ Background Processing
+
+- Scheduled Payment Expiry
+- Audit Trail
+- Payment Synchronization
 
 ---
 
@@ -194,37 +217,63 @@ The Payment Service has been designed with the following objectives:
 | Category | Technology |
 |-----------|------------|
 | Language | Java 21 |
-| Framework | Spring Boot 3 |
-| Security | Spring Security |
+| Framework | Spring Boot 3.2.5 |
+| Build Tool | Gradle |
 | Database | MySQL |
 | ORM | Spring Data JPA |
-| Payment Gateway | Razorpay |
-| Service Communication | OpenFeign |
-| Fault Tolerance | Resilience4j |
-| Validation | Bean Validation |
-| Build Tool | Gradle |
+| Security | Spring Security, JWT |
+| Service Discovery | Netflix Eureka Client |
+| Inter-Service Communication | Spring Cloud OpenFeign |
+| External Payment Gateway | Razorpay REST APIs |
+| Fault Tolerance | Resilience4j (Retry, Circuit Breaker, Bulkhead, Fallbacks) |
+| Monitoring | Spring Boot Actuator |
+| Validation | Jakarta Bean Validation |
+| Scheduling | Spring Scheduler |
+| Build Automation | Gradle |
+
 
 ---
 
 # 🏛 High-Level Architecture
 
-```text
-                 Client / Booking Service
-                          │
-                          ▼
-                 Payment Controller
-                          │
-                          ▼
-                  Payment Service
-                          │
-      ┌───────────────────┴───────────────────┐
-      ▼                                       ▼
- Payment Repository                    Razorpay Gateway
-      │
-      ▼
- MySQL Database
-```
+```mermaid
+flowchart LR
 
+Client["Client / Booking Service"]
+
+Controller["Payment Controller"]
+
+Service["Payment Service"]
+
+Gateway["Service Gateway Layer"]
+
+Booking["Booking Service"]
+
+Razorpay["Razorpay API"]
+
+Repository["Repositories"]
+
+DB[(MySQL)]
+
+Eureka["Netflix Eureka"]
+
+Actuator["Spring Boot Actuator"]
+
+Client --> Controller
+Controller --> Service
+
+Service --> Gateway
+
+Gateway --> Booking
+Gateway --> Razorpay
+
+Service --> Repository
+Repository --> DB
+
+Gateway -.Service Discovery.-> Eureka
+
+Actuator --> Service
+```
 ---
 
 # 💳 Payment Service Responsibilities
@@ -280,9 +329,6 @@ stayease-payment-service
 │   │               ├── config
 │   │               │   ├── BookingServiceClient.java
 │   │               │   ├── FeignClientConfig.java
-│   │               │   ├── FeignConfig.java
-│   │               │   ├── FeignErrorDecoder.java
-│   │               │   ├── FeignLoggingConfig.java
 │   │               │   ├── RazorpayClient.java
 │   │               │   └── RazorpayFeignConfig.java
 │   │               │
@@ -290,9 +336,8 @@ stayease-payment-service
 │   │               │   └── PaymentController.java
 │   │               │
 │   │               ├── dto
-│   │               │   ├── request
-│   │               │   ├── response
-│   │               │   └── UserResponseDTO.java
+│   │               │   ├── Request
+│   │               │   └── Response
 │   │               │
 │   │               ├── entity
 │   │               │   ├── AuditLog.java
@@ -302,20 +347,28 @@ stayease-payment-service
 │   │               │   └── RefundTransaction.java
 │   │               │
 │   │               ├── exception
-│   │               │   ├── BusinessException.java
-│   │               │   ├── GlobalExceptionHandler.java
-│   │               │   └── ResourceNotFoundException.java
+│   │               │
+│   │               ├── integrations
+│   │               │   ├── BookingServiceGateway.java
+│   │               │   └── RazorpayServiceGateway.java
 │   │               │
 │   │               ├── repository
-│   │               │   ├── AuditLogRepository.java
-│   │               │   ├── PaymentOrderRepository.java
-│   │               │   └── RefundTransactionRepository.java
 │   │               │
 │   │               ├── security
 │   │               │   ├── HeaderAuthenticationFilter.java
 │   │               │   └── SecurityConfig.java
 │   │               │
 │   │               ├── service
+│   │               │   ├── AuditService.java
+│   │               │   ├── PaymentExpiryScheduler.java
+│   │               │   ├── PaymentService.java
+│   │               │   ├── PaymentServiceImpl.java
+│   │               │   ├── RazorpayOrderService.java
+│   │               │   ├── RazorpayOrderServiceImpl.java
+│   │               │   ├── RazorpayVerificationService.java
+│   │               │   ├── RazorpayVerificationServiceImpl.java
+│   │               │   ├── RefundService.java
+│   │               │   └── RefundServiceImpl.java
 │   │               │
 │   │               └── PaymentServiceApplication.java
 │   │
@@ -324,20 +377,14 @@ stayease-payment-service
 │   │
 │   └── test
 │       └── java
-│           └── com
-│               └── stayease
-│                   └── payment_service
-│                       └── PaymentServiceApplicationTests.java
 │
-├── .gitattributes
 ├── .gitignore
 ├── LICENSE
+├── README.md
 ├── build.gradle
-├── build.log
-├── gradlew
-├── gradlew.bat
 ├── settings.gradle
-└── README.md
+├── gradlew
+└── gradlew.bat
 ```
 
 ---
@@ -365,25 +412,36 @@ The Payment Service follows a modular package structure where each package has a
 
 The Payment Service follows a layered architecture that separates API exposure, business logic, persistence, and external payment gateway integration into independent layers.
 
-```text
-                    Booking Service / Client
-                              │
-                              ▼
-                     Payment Controller
-                              │
-                              ▼
-                      Payment Service
-                 (Business Orchestration)
-                              │
-        ┌─────────────────────┼──────────────────────┐
-        ▼                     ▼                      ▼
- Payment Repository     Booking Service        Razorpay SDK
-                              │
-                              ▼
-                        Booking Service
-                              │
-                              ▼
-                        MySQL Database
+```mermaid
+flowchart TB
+
+Client["REST Client"]
+
+Controller["Controller Layer"]
+
+Service["Service Layer"]
+
+Gateway["Gateway Layer"]
+
+Repository["Repository Layer"]
+
+Database[(MySQL)]
+
+Booking["Booking Service"]
+
+Razorpay["Razorpay"]
+
+Controller --> Service
+
+Service --> Repository
+
+Repository --> Database
+
+Service --> Gateway
+
+Gateway --> Booking
+
+Gateway --> Razorpay
 ```
 
 Each layer has a dedicated responsibility:
@@ -402,118 +460,164 @@ This architecture promotes loose coupling, high cohesion, and independent evolut
 
 ## 📁 config
 
-The `config` package contains all infrastructure-level configuration required for external communication and application behavior.
+Contains infrastructure-level configuration for the Payment Service including OpenFeign clients, Razorpay client configuration, request interceptors, authentication propagation, Feign error handling, and communication with downstream services.
 
 Responsibilities include:
 
-- OpenFeign client configuration
-- Razorpay client initialization
-- Feign logging configuration
-- Custom Feign error decoding
-- Booking Service communication
-- Infrastructure bean configuration
-
-Keeping infrastructure concerns separate from business logic simplifies maintenance and improves extensibility.
+- Booking Service Feign Client
+- Razorpay API Client
+- Feign Request Interceptors
+- JWT Header Propagation
+- Correlation ID Propagation
+- Basic Authentication for Razorpay
+- Feign Logging
+- Error Decoder Configuration
 
 ---
 
 ## 📁 controller
 
-The controller layer serves as the entry point for all payment-related REST APIs.
+Acts as the REST API entry point for all payment-related operations.
 
-Major responsibilities include:
+Responsibilities include:
 
-- Creating payment orders
-- Confirming payments
-- Retrieving payment details
-- Processing refunds
-- Fetching payment history
-- Generating receipts
-- Exposing development testing endpoints
-
-Controllers remain lightweight by delegating business processing to the service layer.
+- Payment Order APIs
+- Payment Confirmation APIs
+- Payment Status APIs
+- Retry Payment APIs
+- Refund APIs
+- Receipt APIs
+- Payment History APIs
+- Razorpay Webhook Endpoint
 
 ---
 
 ## 📁 dto
 
-The DTO package defines API contracts exchanged between services and external clients.
+Contains request and response models exchanged between clients, Booking Service, and Razorpay while keeping persistence entities isolated from API contracts.
 
-It contains:
+Includes:
 
 - Request DTOs
 - Response DTOs
-- UserResponseDTO
-- Payment response models
-- Refund response models
-
-Using DTOs prevents direct exposure of internal entities and enables API evolution without affecting persistence models.
+- Webhook Payload Models
+- Payment Models
+- Refund Models
 
 ---
 
 ## 📁 entity
 
-The entity package models the financial domain of the application.
+Defines the financial domain model of the application.
 
 Core entities include:
 
 - PaymentOrder
-- PaymentOrderStatus
 - RefundTransaction
-- RefundStatus
 - AuditLog
+- PaymentOrderStatus
+- RefundStatus
 
-These entities represent the complete payment lifecycle while maintaining strong domain boundaries.
+---
+
+## 📁 exception
+
+Provides centralized exception handling and business-specific exceptions.
+
+Responsibilities include:
+
+- Business Exception Handling
+- Resource Not Found Handling
+- Global Exception Mapping
+- Standardized API Error Responses
+
+---
+
+## 📁 integrations
+
+Implements the Service Gateway pattern for all outbound service communication.
+
+Responsibilities include:
+
+- Booking Service Gateway
+- Razorpay Service Gateway
+- Retry Logic
+- Circuit Breaker Integration
+- Bulkhead Protection
+- Fallback Handling
+- Centralized External Service Communication
 
 ---
 
 ## 📁 repository
 
-Repositories provide data access using Spring Data JPA.
+Provides database access using Spring Data JPA.
 
 Responsibilities include:
 
-- Persisting payment orders
-- Managing refund transactions
-- Storing audit logs
-- Querying payment history
-- Tracking payment status
-
-The repository layer abstracts database interaction from business logic.
+- Payment Order Persistence
+- Refund Transaction Persistence
+- Audit Log Persistence
+- Payment History Queries
+- Refund Queries
 
 ---
 
 ## 📁 security
 
-The security package protects payment operations against unauthorized access.
+Secures REST APIs using Spring Security and Header Authentication.
 
 Responsibilities include:
 
-- Spring Security configuration
-- Header-based authentication
-- Internal microservice authentication
-- Request filtering
-- Authorization support
-
-Security is centralized to provide consistent protection across all payment APIs.
+- JWT Authentication
+- Header Authentication Filter
+- Authorization Rules
+- Internal Service Authentication
+- Security Filter Chain
 
 ---
 
 ## 📁 service
 
-The service layer is the core of the Payment Service.
+Contains the complete business logic for payment processing.
 
-It implements:
+Responsibilities include:
 
-- Payment order creation
-- Payment confirmation
-- Payment verification
-- Refund processing
-- Receipt generation
-- Audit logging
-- Booking Service synchronization
-- Payment retry handling
-- Financial business validation
+- Payment Order Management
+- Payment Confirmation
+- Payment Verification
+- Retry Payment Processing
+- Refund Processing
+- Receipt Generation
+- Audit Logging
+- Payment Expiration Scheduler
+- Razorpay Signature Verification
+- Booking Synchronization
+- Webhook Processing
+
+---
+
+## 📁 resources
+
+Contains externalized application configuration.
+
+Includes:
+
+- Environment Profiles
+- Database Configuration
+- Eureka Configuration
+- Feign Configuration
+- Resilience4j Configuration
+- Actuator Configuration
+- Logging Configuration
+- Razorpay Credentials
+- Monitoring Configuration
+
+---
+
+## 📁 test
+
+Contains unit and integration tests for validating payment workflows, business rules, gateway communication, and service interactions.
 
 The service layer orchestrates all payment-related operations while coordinating with Razorpay and the Booking Service.
 
@@ -522,31 +626,33 @@ The service layer orchestrates all payment-related operations while coordinating
 
 Every payment request follows a structured processing pipeline to ensure financial consistency, secure gateway communication, and reliable transaction management.
 
-```text
-                 Booking Service
-                        │
-                        ▼
-              Payment Request Received
-                        │
-                        ▼
-               Request Validation
-                        │
-                        ▼
-         Verify Booking Information
-                        │
-                        ▼
-        Generate Razorpay Payment Order
-                        │
-                        ▼
-         Persist Payment Information
-                        │
-                        ▼
-         Return Payment Order Details
-                        │
-                        ▼
-               Await Payment Completion
-```
+```mermaid
+flowchart LR
 
+Booking["Booking Service"]
+
+Controller["Payment Controller"]
+
+Service["Payment Service"]
+
+Gateway["Razorpay Gateway"]
+
+DB[(Payment Database)]
+
+Booking --> Controller
+
+Controller --> Service
+
+Service --> Gateway
+
+Gateway -->|"Create Order"| Gateway
+
+Service --> DB
+
+DB --> Controller
+
+Controller --> Booking
+```
 This lifecycle ensures every payment request is validated, persisted, and synchronized with the external payment gateway before user payment begins.
 
 ---
@@ -555,30 +661,24 @@ This lifecycle ensures every payment request is validated, persisted, and synchr
 
 A payment progresses through multiple business states during its lifecycle.
 
-```text
-                Payment Created
-                       │
-                       ▼
-                  PENDING
-                       │
-        ┌──────────────┴──────────────┐
-        ▼                             ▼
- Payment Successful            Payment Failed
-        │                             │
-        ▼                             ▼
-   COMPLETED                     FAILED
-        │                             │
-        ▼                             ▼
- Receipt Generated          Retry Payment
-        │
-        ▼
-  Refund Requested
-        │
-        ▼
-Refund Processing
-        │
-        ▼
-Refund Completed
+```mermaid
+stateDiagram-v2
+
+[*] --> PAYMENT_PENDING
+
+PAYMENT_PENDING --> PAYMENT_CONFIRMED : Success
+
+PAYMENT_PENDING --> PAYMENT_FAILED : Failure
+
+PAYMENT_FAILED --> PAYMENT_PENDING : Retry
+
+PAYMENT_CONFIRMED --> REFUND_PENDING : Refund Requested
+
+REFUND_PENDING --> REFUND_PROCESSING
+
+REFUND_PROCESSING --> REFUNDED
+
+REFUNDED --> [*]
 ```
 
 The Payment Service controls every transition to ensure payment consistency while coordinating with the Booking Service.
@@ -589,26 +689,25 @@ The Payment Service controls every transition to ensure payment consistency whil
 
 When a customer books a property, the Booking Service requests the Payment Service to create a payment order.
 
-```text
-             Booking Service
-                    │
-                    ▼
-        Create Payment Request
-                    │
-                    ▼
-      Validate Booking Details
-                    │
-                    ▼
-     Generate Razorpay Order
-                    │
-                    ▼
-     Save Payment Order
-                    │
-                    ▼
- Return Payment Order Response
-                    │
-                    ▼
-       Booking Service
+```mermaid
+sequenceDiagram
+
+participant Booking
+participant Payment
+participant Razorpay
+participant DB
+
+Booking->>Payment: Create Payment Order
+
+Payment->>Payment: Validate Request
+
+Payment->>Razorpay: Create Razorpay Order
+
+Razorpay-->>Payment: Order ID
+
+Payment->>DB: Save Payment Order
+
+Payment-->>Booking: Payment Order Response
 ```
 
 The Payment Service owns payment creation while Razorpay generates the external payment order identifier used during checkout.
@@ -619,29 +718,34 @@ The Payment Service owns payment creation while Razorpay generates the external 
 
 After the customer completes payment, the payment confirmation process validates and finalizes the transaction.
 
-```text
-             Payment Confirmation
-                     │
-                     ▼
-         Retrieve Payment Order
-                     │
-                     ▼
-        Verify Payment Status
-                     │
-                     ▼
-     Validate Razorpay Response
-                     │
-                     ▼
-      Update Payment Status
-                     │
-                     ▼
- Notify Booking Service
-                     │
-                     ▼
- Generate Receipt
-                     │
-                     ▼
- Return Success Response
+```mermaid
+flowchart LR
+
+Client["Client"]
+
+Controller["Payment Controller"]
+
+Service["Payment Service"]
+
+Gateway["Razorpay Gateway"]
+
+Booking["Booking Service"]
+
+Client --> Controller
+
+Controller --> Service
+
+Service --> Gateway
+
+Gateway -->|"Verify Payment"| Service
+
+Service --> Booking
+
+Booking --> Service
+
+Service --> Controller
+
+Controller --> Client
 ```
 
 During backend development, payment confirmation can also be triggered using the dedicated testing endpoint. Once the frontend is integrated, this confirmation will be initiated through the Razorpay Checkout flow.
@@ -652,26 +756,24 @@ During backend development, payment confirmation can also be triggered using the
 
 Payment authenticity is verified before any booking is confirmed.
 
-```text
-          Razorpay Payment
-                  │
-                  ▼
-      Receive Payment Details
-                  │
-                  ▼
-      Verify Payment Signature
-                  │
-                  ▼
-   Retrieve Payment Information
-                  │
-                  ▼
- Compare Transaction Details
-                  │
-                  ▼
- Verification Successful
-                  │
-                  ▼
- Update Payment Status
+```mermaid
+sequenceDiagram
+
+participant Client
+participant Payment
+participant Razorpay
+
+Client->>Payment: Payment Confirmation
+
+Payment->>Razorpay: Fetch Payment
+
+Razorpay-->>Payment: Payment Details
+
+Payment->>Payment: Verify Signature
+
+Payment->>Payment: Update Status
+
+Payment-->>Client: Success
 ```
 
 This verification process protects the application against forged or tampered payment confirmations.
@@ -682,26 +784,25 @@ This verification process protects the application against forged or tampered pa
 
 Refunds are processed independently of payment creation while maintaining a complete financial history.
 
-```text
-          Refund Request
-                 │
-                 ▼
-     Validate Payment Status
-                 │
-                 ▼
-   Validate Refund Eligibility
-                 │
-                 ▼
- Create Refund Transaction
-                 │
-                 ▼
- Update Refund Status
-                 │
-                 ▼
- Persist Refund Details
-                 │
-                 ▼
- Return Refund Response
+```mermaid
+sequenceDiagram
+
+participant User
+participant Payment
+participant Razorpay
+participant DB
+
+User->>Payment: Refund Request
+
+Payment->>Payment: Validate Refund
+
+Payment->>Razorpay: Refund API
+
+Razorpay-->>Payment: Refund Success
+
+Payment->>DB: Update Refund
+
+Payment-->>User: Refund Completed
 ```
 
 Each refund operation is recorded separately to preserve complete transaction traceability.
@@ -712,20 +813,22 @@ Each refund operation is recorded separately to preserve complete transaction tr
 
 Receipts are generated only after successful payment confirmation.
 
-```text
-      Payment Completed
-              │
-              ▼
- Retrieve Payment Details
-              │
-              ▼
- Generate Receipt
-              │
-              ▼
- Persist Receipt Information
-              │
-              ▼
- Return Receipt Response
+```mermaid
+sequenceDiagram
+
+participant User
+participant Payment
+participant DB
+
+User->>Payment: Request Receipt
+
+Payment->>DB: Fetch Payment
+
+DB-->>Payment: Payment Details
+
+Payment->>Payment: Generate Receipt
+
+Payment-->>User: Receipt
 ```
 
 Receipt generation provides users with an official record of completed financial transactions.
@@ -736,23 +839,30 @@ Receipt generation provides users with an official record of completed financial
 
 If a payment fails due to temporary issues, users can retry payment without recreating the booking.
 
-```text
-        Payment Failed
-               │
-               ▼
-      Retry Payment Request
-               │
-               ▼
- Validate Existing Booking
-               │
-               ▼
- Generate New Payment Order
-               │
-               ▼
- Save Updated Payment
-               │
-               ▼
- Return New Payment Order
+```mermaid
+flowchart LR
+
+User["User"]
+
+Controller["Payment Controller"]
+
+Service["Payment Service"]
+
+Gateway["Razorpay Gateway"]
+
+Database[(Database)]
+
+User --> Controller
+
+Controller --> Service
+
+Service --> Database
+
+Service --> Gateway
+
+Gateway --> Service
+
+Service --> Controller
 ```
 
 This improves user experience while avoiding duplicate bookings.
@@ -763,27 +873,35 @@ This improves user experience while avoiding duplicate bookings.
 
 The Payment Service coordinates payment status with the Booking Service throughout the booking lifecycle.
 
-```text
-          Booking Service
-                 │
-                 ▼
-      Create Payment Order
-                 │
-                 ▼
-         Payment Service
-                 │
-        ┌────────┴────────┐
-        ▼                 ▼
- Razorpay Gateway     Payment Database
-        │
-        ▼
- Payment Confirmation
-        │
-        ▼
- Notify Booking Service
-        │
-        ▼
- Booking Status Updated
+```mermaid
+sequenceDiagram
+
+participant Booking
+participant Payment
+participant Gateway
+participant Razorpay
+
+Booking->>Payment: Create Payment
+
+Payment->>Gateway: Create Order
+
+Gateway->>Razorpay: API Request
+
+Razorpay-->>Gateway: Response
+
+Gateway-->>Payment: Payment Order
+
+Payment-->>Booking: Order Created
+
+Booking->>Payment: Confirm Payment
+
+Payment->>Gateway: Verify Payment
+
+Gateway->>Razorpay: Verify
+
+Gateway-->>Payment: Verified
+
+Payment-->>Booking: Confirm Booking
 ```
 
 The Booking Service remains the owner of reservation data, while the Payment Service exclusively owns financial transactions.
@@ -794,22 +912,22 @@ The Booking Service remains the owner of reservation data, while the Payment Ser
 
 The Payment Service integrates with Razorpay to securely process payment operations.
 
-```text
-         Payment Service
-                │
-                ▼
-        Razorpay Java SDK
-                │
-                ▼
-       Razorpay REST APIs
-                │
-      ┌─────────┴─────────┐
-      ▼                   ▼
-Create Payment Order   Verify Payment
-      │                   │
-      └─────────┬─────────┘
-                ▼
-      Payment Response Returned
+```mermaid
+flowchart LR
+
+Payment["Payment Service"]
+
+Gateway["Razorpay Service Gateway"]
+
+Feign["Feign Client"]
+
+Razorpay["Razorpay REST APIs"]
+
+Payment --> Gateway
+
+Gateway --> Feign
+
+Feign --> Razorpay
 ```
 
 Using the official Razorpay SDK simplifies secure communication while reducing custom integration complexity.
@@ -977,24 +1095,59 @@ Audit logging ensures that every important financial action can be traced throug
 
 # 🌐 Service Communication Strategy
 
-The Payment Service communicates with the Booking Service using OpenFeign.
+```mermaid
+flowchart LR
 
-Responsibilities remain clearly separated:
+Payment["Payment Service"]
 
-**Booking Service**
+Gateway["Gateway Layer"]
 
-- Booking ownership
-- Reservation lifecycle
-- Booking validation
+Retry["Retry"]
 
-**Payment Service**
+Circuit["Circuit Breaker"]
 
-- Payment ownership
-- Financial transactions
-- Refund processing
-- Receipt generation
+Bulkhead["Bulkhead"]
+
+Booking["Booking Service"]
+
+Razorpay["Razorpay API"]
+
+Payment --> Gateway
+
+Gateway --> Retry
+
+Retry --> Circuit
+
+Circuit --> Bulkhead
+
+Bulkhead --> Booking
+
+Bulkhead --> Razorpay
+```
 
 This loose coupling enables each service to evolve independently while collaborating through well-defined APIs.
+
+---
+# 🚪 Service Gateway Pattern
+
+The Payment Service follows a dedicated **Gateway Pattern** for all outbound communication.
+
+Instead of invoking Feign clients directly from business services, all external interactions are centralized inside Gateway classes.
+
+Current gateways include:
+
+- BookingServiceGateway
+- RazorpayServiceGateway
+
+Each gateway provides:
+
+- Retry
+- Circuit Breaker
+- Bulkhead
+- Fallback handling
+- Centralized logging
+- Cleaner business services
+- Easier testing
 
 ---
 
@@ -1018,6 +1171,21 @@ Benefits include:
 
 These mechanisms increase overall resilience without complicating business logic.
 
+---
+# 📡 Service Discovery Strategy
+
+The Payment Service uses **Netflix Eureka** for dynamic service discovery instead of hardcoded service URLs.
+
+All internal microservice communication is resolved through Eureka, allowing services to register, discover, and communicate dynamically.
+
+Benefits include:
+
+- Dynamic service registration
+- Automatic service discovery
+- Improved scalability
+- Environment-independent deployment
+- Reduced configuration overhead
+- Better cloud-native readiness
 ---
 
 # 🛡 Security Strategy
@@ -1175,7 +1343,24 @@ Key production capabilities include:
 These practices improve scalability, maintainability, and operational reliability.
 
 ---
+# 📈 Monitoring & Observability
 
+The Payment Service exposes production-ready monitoring capabilities using Spring Boot Actuator and Micrometer.
+
+Monitoring includes:
+
+- Health Checks
+- Metrics
+- JVM Statistics
+- Memory Usage
+- Thread Statistics
+- HTTP Metrics
+- Application Info
+- Prometheus Metrics
+
+These endpoints simplify integration with Prometheus and Grafana for production monitoring.
+
+---
 # 🔮 Future Enhancements
 
 The architecture has been designed to support future enhancements with minimal changes.
